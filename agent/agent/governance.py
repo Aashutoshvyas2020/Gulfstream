@@ -50,6 +50,19 @@ except Exception as exc:  # Governor not installed: scans run unrecorded
     print(f"Sentience Governor unavailable, recording off: {exc}")
     ENABLED = False
 
+# The Governor profiles ship inside the Flower app (governance_profiles/, a copy of the
+# repo's governance/), so every run is governed by the same profiles: on a laptop, on a
+# teammate's machine, or on SuperGrid, where ~/.sentience does not exist. Governor reads
+# its resolution path from the loader module at session start; this points it there.
+PROFILES_DIR = Path(os.environ.get("ANTIBODY_GOVERNOR_PROFILES", Path(__file__).with_name("governance_profiles")))
+if ENABLED and (PROFILES_DIR / "resolution.yaml").exists():
+    try:
+        from sentience_governor.profile import loader as _profile_loader
+
+        _profile_loader.DEFAULT_RESOLUTION_PATH = PROFILES_DIR / "resolution.yaml"
+    except Exception as exc:  # fall back to ~/.sentience/resolution.yaml
+        print(f"Governor profiles: using ~/.sentience ({exc})")
+
 _shared: dict[str, Any] = {}
 _shared_lock = threading.Lock()
 

@@ -452,6 +452,26 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual(approved["approval"], "approved by Dana (A1)")
         self.assertIn("approved by Dana (A1)", approved["line"])
 
+    def test_bundled_profiles_govern_without_a_home_config_as_on_supergrid(self):
+        if not governance.ENABLED:
+            self.skipTest("Sentience Governor not installed")
+        # The bundle is a copy of the repo's governance/: keep them identical
+        bundle = REPO / "agent" / "agent" / "governance_profiles"
+        for rel in ["resolution.yaml", *[f"profiles/{p.name}" for p in (REPO / "governance" / "profiles").glob("*.yaml")]]:
+            src = REPO / "governance" / rel
+            self.assertEqual((bundle / rel).read_text(), src.read_text(), f"governance_profiles/{rel} is out of date")
+        with tempfile.TemporaryDirectory() as home:  # no ~/.sentience at all
+            env = {**os.environ, "HOME": home, "ANTIBODY_TRACE_DIR": str(Path(home, "traces"))}
+            out = subprocess.run(
+                [sys.executable, "-c", GOVERNOR_SCRIPT], env=env, cwd=REPO / "agent",
+                capture_output=True, text=True, check=True,
+            ).stdout
+        events = json.loads(out.strip().splitlines()[-1])
+        (registered,) = [e for e in events if e["event_type"] == "AGENT_REGISTERED"]
+        self.assertEqual(registered["payload"].get("profile_binding"), "antibody-*")
+        shut = [e for e in events if e["event_type"] == "SCOPE_ASSERTED"][1]
+        self.assertIn("HIGH_CONSEQUENCE_DETECTED", shut["advisory_flags"])
+
 
 if __name__ == "__main__":
     unittest.main()
