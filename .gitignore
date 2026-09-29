@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.fab
+# Local-only pages derived from another team's site; never commit
+antibody-web/static/story/
+antibody-web/static/pitch.html
