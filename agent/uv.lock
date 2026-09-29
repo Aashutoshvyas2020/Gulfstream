@@ -45,12 +45,14 @@ source = { editable = "." }
 dependencies = [
     { name = "flwr" },
     { name = "openai" },
+    { name = "sentience-governor" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "flwr", specifier = ">=1.38.0,<2.0" },
+    { name = "flwr", specifier = ">=1.39.0,<=1.39.0" },
     { name = "openai", specifier = ">=2.16.0,<3.0.0" },
+    { name = "sentience-governor", specifier = ">=0.3.2.1,<0.4" },
 ]
 
 [[package]]
@@ -1404,6 +1406,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e9/67/cae617f1351490c25a4b8ac3b8b63a4dda609295d8222bad12242dfdc629/rich-14.3.4.tar.gz", hash = "sha256:817e02727f2b25b40ef56f5aa2217f400c8489f79ca8f46ea2b70dd5e14558a9", size = 230524, upload-time = "2026-04-11T02:57:45.419Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/76/6d163cfac87b632216f71879e6b2cf17163f773ff59c00b5ff4900a80fa3/rich-14.3.4-py3-none-any.whl", hash = "sha256:07e7adb4690f68864777b1450859253bed81a99a31ac321ac1817b2313558952", size = 310480, upload-time = "2026-04-11T02:57:47.484Z" },
+]
+
+[[package]]
+name = "sentience-governor"
+version = "0.3.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bb/b4/ca64b4ecd537b9aae8473bddf91c4c72aef5e5129b435b85a1bf286687d1/sentience_governor-0.3.2.1.tar.gz", hash = "sha256:cc02518b55318b7383ae120abafe8ae7d24421c3566c763e6921b7ad9fc152f8", size = 295755, upload-time = "2026-09-22T23:48:32.576Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/68/53ba8c79e61227d86e1e09ba3fad07bf3c438e9d14496f3fadf20226ba74/sentience_governor-0.3.2.1-py3-none-any.whl", hash = "sha256:2715ee3134364ae06384ee8eb085cb224eb446cdcdcca63e8fccfc64a3d16b74", size = 280203, upload-time = "2026-09-22T23:48:31.304Z" },
 ]
 
 [[package]]
