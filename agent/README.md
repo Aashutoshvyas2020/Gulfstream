@@ -34,10 +34,11 @@ Sensor readings are simulated demo data (`agent/building_data.py`).
 | File | What it holds |
 |---|---|
 | `agent/agent_app.py` | The swarm: decide held approvals, sense and act (agents in parallel), rank, investigate, alert (coordinator) |
-| `agent/actions.py` | Every agent's Tier 0-3 tools, their simulated effects, the fixed rules (health < 70, 2 attempts, +/-15%) and approvals |
+| `agent/actions.py` | Every agent's tools, their simulated effects and re-checks, the fixed rules (health < 70, 2 attempts, +/-15%) and approvals |
 | `agent/specialists.py` | One job description per agent. Add an entry, its readings and its actions to add a building system |
 | `agent/building_data.py` | The demo building and its sensor snapshot |
 | `agent/governance.py` | Sentience Governor record per agent |
+| `agent/building_domain.py` | Operation type and tier for every action (one row each), shared by the Governor record and the approval gate |
 | `tests/test_actions.py` | Tier rules, approvals and two-message scans with a fake model: `python -m unittest discover -s tests -v` |
 
 ## Run

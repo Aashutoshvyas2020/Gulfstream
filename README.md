@@ -99,11 +99,11 @@ The agent emits `antibody.scan.started`, `antibody.agent.report`, `antibody.scan
 
 ### Actions and approvals (`agent/agent/actions.py`)
 
-Each specialist may propose one action from its own tools. The tier decides what happens; the model never does.
+Each specialist may propose one action from its own tools. The tier decides what happens; the model never does. Tiers come from `building_domain.tier()`, so a new action needs a row there (a missing row makes it Tier 3). Connector calls are gated the same way: any connector with `tier(name) == 3` (today `start_automation`) is held.
 
 | Tier | What happens | `antibody.action` status |
 | :-- | :-- | :-- |
-| 0 Cleanup | Runs at once | `done` |
+| 0 Cleanup | Runs once; a re-read (rescan, remeasure) that still shows the problem escalates | `done`, or `recheck_failed` then `escalated` |
 | 1 Self-correction | Runs, re-checks its own fix; after 2 failed re-checks it escalates | `fixed`, `recheck_failed`, then `escalated` |
 | 2 Escalate | Also fired when building health is below 70, or an agent asks for another area's tool | `escalated`, `refused` |
 | 3 Human approval | Held with an id (`A1`, `A2`, …); `start_automation` is held the same way | `held`, then `executed` or `rejected` in a later message |
@@ -121,7 +121,7 @@ Tests: `cd agent && python -m unittest discover -s tests -v` (fake model, no Sup
 | **1. Agents** | Roansh Desai | `agent/` | Tier 0–3 actions: add `<area>.<verb>_<object>` tools per agent (e.g. `hvac.reset_damper`, `h2o.shut_valve`), fixed thresholds in code (health < 70 escalates, 2 retries), an approval gate for Tier 3 actions and `start_automation` |
 | **2. Flower integration** | Aashutosh Vyas | `antibody-web/server.py`, SuperLink / SuperGrid setup | Publish the Flower Hub app (required for submission); get SuperGrid access working; confirm the heartbeat fix; real network immunity with 2–3 buildings as SuperNodes using `agent.grid` (`get_nodes`, `push_messages`, `pull_messages`): lessons travel, readings never do |
 | **3. Frontend** | Rikin Shah | `antibody-web/static/` | Tier 3 approval prompt, the "actions → auto-fixes → escalations → 1 human decision" funnel, a multi-building view for network immunity |
-| **Sentience Governor** | Roansh Desai (Claude supporting) | `agent/agent/governance.py`, `governance/` | One Governor session per agent (`antibody-<code>`, `antibody-coordinator`); route every new action through `AgentRecord.call` with its `operation` (READ / WRITE / EXECUTE, so fixes are recorded as writes); keep the naming contract below |
+| **Sentience Governor** | Roansh Desai (Claude supporting) | `agent/agent/governance.py`, `governance/` | One Governor session per agent (`antibody-<code>`, `antibody-coordinator`); route every new action through `AgentRecord.call` and give it a row in `building_domain.py`; keep the naming contract below |
 
 If you change the shape of a run event, change it in all three lanes in the same pull request.
 
@@ -131,6 +131,7 @@ Every agent keeps its own [Sentience Governor](https://github.com/crescerelabs/s
 
 - **Where:** `agent/agent/governance.py`, wired into `run_specialist()` (each specialist) and `investigate()` (the coordinator's connector calls).
 - **Naming contract:** agent actions are `<area>.<verb>_<object>` (e.g. `h2o.shut_valve`); each specialist declares its own area as its scope. An action on another area's system is flagged as outside declared scope.
+- **Building domain adapter** (`agent/agent/building_domain.py`): one table gives every action its operation type (READ, WRITE, DELETE, EXECUTE) for the Governor record, and its tier (0–3) for the approval gate. Governor would otherwise guess from words in the tool name. `building_domain.tier(name) == 3` means a human must approve first. Add a row for every new action; an action not in the table is treated as a Tier 3 write.
 - **Flagged as high-consequence** (profiles in `governance/profiles/`):
   - Tier 3 actions: `trip_breaker`, `shut_valve`, `isolate_zone`, `dispatch_contractor`, `notify_tenants`;
   - `start_automation`;

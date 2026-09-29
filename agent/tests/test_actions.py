@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 os.environ.setdefault("FLWR_RUNTIME_BASE_URL", "http://fake")
 os.environ.setdefault("FLWR_RUNTIME_API_KEY", "fake")
 
-from agent import actions, agent_app, governance  # noqa: E402
+from agent import actions, agent_app, building_domain, governance  # noqa: E402
 from agent.building_data import SNAPSHOT  # noqa: E402
 from agent.specialists import SPECIALISTS  # noqa: E402
 
@@ -52,9 +52,16 @@ class CatalogTest(unittest.TestCase):
         for code, catalog in actions.CATALOG.items():
             for action_id, action in catalog.items():
                 self.assertRegex(action_id, rf"^{code.lower()}\.[a-z]+(_[a-z0-9]+)+$")
-                self.assertIn(action.operation, {"READ", "WRITE", "DELETE", "EXECUTE"})
                 if action.tier == actions.SELF_CORRECT:
                     self.assertIsNotNone(action.check, action_id)
+
+    def test_every_action_has_a_building_domain_row(self):
+        # A missing row silently makes an action a Tier 3 WRITE
+        for catalog in actions.CATALOG.values():
+            for action in catalog.values():
+                self.assertIn(action.verb_object, building_domain.ACTIONS, action.id)
+        self.assertEqual(building_domain.tier(actions.ESCALATE_ID), actions.ESCALATE)
+        self.assertEqual(building_domain.tier(actions.AUTOMATION_TOOL), actions.APPROVAL)
 
     def test_every_tier3_action_is_flagged_by_its_governor_profile(self):
         try:
@@ -101,6 +108,13 @@ class TierRulesTest(unittest.TestCase):
         result = actions.act(FakeRecord(), "H2O", {"tool": "h2o.enable_night_flow_isolation_mode"}, readings("H2O"))
         self.assertTrue(result.fixed)
 
+    def test_tier0_reread_that_still_shows_the_problem_escalates(self):
+        result = actions.act(FakeRecord(), "ELEC", {"tool": "elec.request_thermal_rescan"}, readings("ELEC"))
+        self.assertEqual([o["status"] for o in result.outcomes], ["recheck_failed", "escalated"])
+        cool = readings("ELEC", breaker_temp_c=45)
+        result = actions.act(FakeRecord(), "ELEC", {"tool": "elec.request_thermal_rescan"}, cool)
+        self.assertEqual([o["status"] for o in result.outcomes], ["done"])
+
     def test_setpoint_changes_are_clamped(self):
         result = actions.act(
             FakeRecord(), "AIR", {"tool": "air.adjust_ventilation", "args": {"percent": 40}}, readings("AIR")
@@ -113,13 +127,13 @@ class TierRulesTest(unittest.TestCase):
         result = actions.act(record, "H2O", {"tool": "h2o.shut_valve", "reason": "riser leak"}, r)
         self.assertEqual(result.held[0]["action"], "h2o.shut_valve")
         self.assertEqual(r["night_flow_lpm_building_empty"], 14)  # nothing changed
-        self.assertEqual(record.calls, [("h2o.shut_valve", "WRITE")])  # the attempt is on record
+        self.assertEqual(record.calls, [("h2o.shut_valve", None)])  # the attempt is on record
 
     def test_another_areas_tool_is_refused_and_escalated(self):
         record = FakeRecord()
         result = actions.act(record, "HVAC", {"tool": "h2o.shut_valve"}, readings("HVAC"))
         self.assertEqual([o["status"] for o in result.outcomes], ["refused", "escalated"])
-        self.assertEqual(record.calls, [("h2o.shut_valve", "WRITE")])  # Governor sees it out of scope
+        self.assertEqual(record.calls, [("h2o.shut_valve", None)])  # Governor sees it out of scope
 
     def test_no_proposal_does_nothing(self):
         for proposal in (None, {}, "hvac.reset_damper", {"tool": 3}):
@@ -282,7 +296,7 @@ from agent import actions
 from agent.building_data import SNAPSHOT
 from agent.governance import AgentRecord, TRACE_DIR
 record = AgentRecord("antibody-h2o", objective="t", scope=["h2o"], run_tag="t")
-record.call("h2o.assess", lambda: None, operation="READ")
+record.call("h2o.assess", lambda: None)
 actions.act(record, "H2O", {"tool": "h2o.shut_valve"}, dict(SNAPSHOT["H2O"]))
 actions.act(record, "H2O", {"tool": "elec.trip_breaker"}, dict(SNAPSHOT["H2O"]))
 record.close()
@@ -297,7 +311,7 @@ class GovernorTest(unittest.TestCase):
     Governor reads ~/.sentience when it is imported, so this runs in its own process.
     """
 
-    def test_tier3_attempt_is_recorded_as_write_and_flagged(self):
+    def test_tier3_attempt_is_recorded_with_its_domain_type_and_flagged(self):
         if not governance.ENABLED:
             self.skipTest("Sentience Governor not installed")
         with tempfile.TemporaryDirectory() as home:
@@ -311,7 +325,7 @@ class GovernorTest(unittest.TestCase):
         events = json.loads(out.strip().splitlines()[-1])
         assess, shut, trip = [e for e in events if e["event_type"] == "SCOPE_ASSERTED"]
         self.assertEqual(assess["payload"]["operation_type"], "READ")
-        self.assertEqual(shut["payload"]["operation_type"], "WRITE")
+        self.assertEqual(shut["payload"]["operation_type"], "EXECUTE")  # from building_domain
         self.assertIn("HIGH_CONSEQUENCE_DETECTED", shut["advisory_flags"])
         self.assertIn("TASK_BOUNDARY_CROSSED", shut["advisory_flags"])  # read-only scan turned into a fix
         self.assertIn("SCOPE_INTENT_MISMATCH", trip["advisory_flags"])

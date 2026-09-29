@@ -14,6 +14,11 @@ Naming contract (the Governor profiles in governance/ rely on it):
   * Connector calls keep Flower's tool names (web_search, web_fetch, slack..., notion...,
     start_automation). The coordinator declares those as its scope.
 
+Operation types come from the building domain adapter (building_domain.py), not from
+Governor's guess from words in the tool name: "h2o.shut_valve" is recorded as EXECUTE,
+"cyber.run_audit" as READ. This replaces one private Governor hook per session; if that
+hook ever changes, recording carries on with Governor's own guess.
+
 Profiles are chosen per agent_id from ~/.sentience/resolution.yaml (Sentience Governor
 0.3.2+); see the README's Governance section. Records land in ANTIBODY_TRACE_DIR,
 default ~/.sentience/traces/antibody/, one file per agent per scan.
@@ -26,6 +31,8 @@ import os
 import threading
 from pathlib import Path
 from typing import Any, Callable
+
+from .building_domain import operation as domain_operation
 
 TRACE_DIR = Path(
     os.environ.get("ANTIBODY_TRACE_DIR", Path.home() / ".sentience" / "traces" / "antibody")
@@ -71,6 +78,8 @@ class AgentRecord:
     def __init__(self, agent_id: str, objective: str, scope: list[str], run_tag: str) -> None:
         self.agent_id = agent_id
         self.ok = False
+        self.domain_typed = False
+        self._operation: str | None = None
         if not ENABLED:
             return
         try:
@@ -90,44 +99,42 @@ class AgentRecord:
             # Governor's public entry is `async with`; the scan loop is synchronous and
             # threaded, so the session is opened and closed explicitly.
             self._session._start()
-            self._operation: str | None = None
-            self._use_declared_operation()
             self.ok = True
+            self.domain_typed = self._use_domain_operations()
         except Exception as exc:
             print(f"Governor session for {agent_id} not started: {exc}")
 
-    def _use_declared_operation(self) -> None:
-        """Let each call say what kind of operation it is.
+    def _use_domain_operations(self) -> bool:
+        """Make this session's proxy take the operation type from the domain adapter.
 
-        Governor guesses READ / WRITE / EXECUTE from words in the tool name ("update",
-        "run", ...), so "h2o.shut_valve" would be recorded as a READ and the profiles'
-        read_to_write_transition would never fire. Governor has no public way to set
-        the type, so this replaces the guess on this session's proxy only. If that
-        internal ever changes, the guess stays and recording carries on.
+        Governor infers the type in a private proxy method; it is replaced on this
+        session's proxy only (sessions run in parallel threads). Any surprise leaves
+        Governor's own guess in place.
         """
         try:
             proxy = self._session._proxy
-            guess = proxy._infer_operation_type
+            fallback = proxy._infer_operation_type
 
             def infer(tool_name: str, arguments: dict) -> Any:
                 if self._operation:
                     return OperationType(self._operation)
-                return guess(tool_name, arguments)
+                return fallback(tool_name, arguments)
 
             proxy._infer_operation_type = infer
+            return True
         except Exception as exc:
             print(f"Governor operation types for {self.agent_id} fall back to name guessing: {exc}")
+            return False
 
     def call(self, tool_name: str, fn: Callable[[], Any], operation: str | None = None) -> Any:
         """Record `tool_name` and run `fn`. Fail-open: `fn` always runs exactly once.
 
-        `operation` (READ, WRITE, DELETE or EXECUTE) is what Governor records the call
-        as; when omitted, Governor guesses from the tool name.
+        `operation` (READ, WRITE, DELETE, EXECUTE) overrides the domain adapter's entry.
         """
         if not self.ok:
             return fn()
+        self._operation = operation or domain_operation(tool_name)
         state: dict[str, Any] = {}
-        self._operation = operation
 
         def run() -> Any:
             state["started"] = True

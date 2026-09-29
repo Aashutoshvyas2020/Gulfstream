@@ -29,7 +29,7 @@ from flwr.agentapp import AgentApp, AgentSession
 from flwr.app import ConfigRecord, Context
 from openai import OpenAI
 
-from . import actions
+from . import actions, building_domain
 from .building_data import BUILDING, SNAPSHOT
 from .governance import AgentRecord
 from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
@@ -145,7 +145,6 @@ def assess(
                 f"Facility manager's message: {prompt}"
             ),
         ),
-        operation="READ",
     )
     parsed = extract_json(response.output_text)
     if parsed is None:
@@ -395,9 +394,12 @@ def investigate(
     client: OpenAI,
     input_items: list[dict[str, Any]],
     record: AgentRecord,
-    hold_automation: Callable[[dict[str, Any]], str],
+    hold_connector: Callable[[dict[str, Any]], str],
 ) -> None:
-    """Bounded connector loop: standards and Slack / Notion evidence. Automations are held."""
+    """Bounded connector loop: standards and Slack / Notion evidence.
+
+    A Tier 3 connector (building_domain.tier, e.g. start_automation) is held for approval.
+    """
     tools = connector_tools(agent)
     if not tools:
         return
@@ -424,10 +426,10 @@ def investigate(
             try:
                 if name not in allowed:
                     raise RuntimeError(f"Tool {name!r} was not exposed")
-                if name == actions.AUTOMATION_TOOL:
+                if building_domain.tier(name) == actions.APPROVAL:
                     # Tier 3: record the attempt (flagged by Governor) and hold it for approval
-                    record.call(name, lambda: None, operation="WRITE")
-                    approval_id = hold_automation(call)
+                    record.call(name, lambda: None)
+                    approval_id = hold_connector(call)
                     result = {
                         "type": "function_call_output",
                         "call_id": call["call_id"],
@@ -457,28 +459,29 @@ def investigate(
             return
 
 
-def run_approved_automation(
+def run_approved_connector(
     agent: AgentSession, record: AgentRecord, item: dict[str, Any]
 ) -> dict[str, Any]:
-    """Schedule an automation the manager approved, starting shortly after approval."""
+    """Make a connector call the manager approved; an automation starts shortly after approval."""
+    name = item["action"]
     call = {
         "type": "function_call",
         "call_id": f"approved-{item['id']}",
-        "name": actions.AUTOMATION_TOOL,
+        "name": name,
         "arguments": actions.rescheduled_automation(
             item["args"].get("arguments", "{}"), datetime.now().astimezone()
         ),
     }
     base = dict(approval_id=item["id"], approved_by=item.get("approved_by", ""))
     try:
-        result = record.call(actions.AUTOMATION_TOOL, lambda: agent.connectors.call(call), operation="WRITE")
+        result = record.call(name, lambda: agent.connectors.call(call))
         if is_error_output(result):
-            return actions.outcome("COORDINATOR", actions.AUTOMATION_TOOL, actions.APPROVAL, "failed",
+            return actions.outcome("COORDINATOR", name, actions.APPROVAL, "failed",
                                    detail=str(result.get("output", ""))[:200], **base)
     except Exception as exc:
-        return actions.outcome("COORDINATOR", actions.AUTOMATION_TOOL, actions.APPROVAL, "failed",
+        return actions.outcome("COORDINATOR", name, actions.APPROVAL, "failed",
                                detail=str(exc)[:200], **base)
-    return actions.outcome("COORDINATOR", actions.AUTOMATION_TOOL, actions.APPROVAL, "executed",
+    return actions.outcome("COORDINATOR", name, actions.APPROVAL, "executed",
                            detail=call["arguments"], **base)
 
 
@@ -555,7 +558,7 @@ def main(agent: AgentSession, context: Context) -> None:
         approved_by_agent: dict[str, list[dict[str, Any]]] = {}
         for item in approved:
             if item["agent"] == "COORDINATOR":
-                emit_outcome(run_approved_automation(agent, coordinator, item))
+                emit_outcome(run_approved_connector(agent, coordinator, item))
             else:
                 approved_by_agent.setdefault(item["agent"], []).append(item)
         if approved or rejected:
@@ -582,7 +585,7 @@ def main(agent: AgentSession, context: Context) -> None:
                 agent.events.emit({"type": EVENT_AGENT_REPORT, "report": report})
                 for item in report["actions"]:
                     if item["status"] == "escalated":
-                        coordinator.call(actions.ESCALATE_ID, lambda: None, operation="WRITE")
+                        coordinator.call(actions.ESCALATE_ID, lambda: None)
                     emit_outcome(item)
                 for item in report["held"]:
                     approval_id, status = approvals.hold(item)
@@ -598,17 +601,18 @@ def main(agent: AgentSession, context: Context) -> None:
         )
         print(f"Scan done: health {health}/100 (previous {previous}), top area {ranked[0]['subsystem']}")
         if health < actions.HEALTH_ESCALATE:
-            coordinator.call(actions.ESCALATE_ID, lambda: None, operation="WRITE")
+            coordinator.call(actions.ESCALATE_ID, lambda: None)
             emit_outcome(actions.outcome("COORDINATOR", actions.ESCALATE_ID, actions.ESCALATE, "escalated",
                                          detail=f"building health {health} is below {actions.HEALTH_ESCALATE}"))
 
         # 3. Investigate with connectors
-        def hold_automation(call: dict[str, Any]) -> str:
-            item = {"agent": "COORDINATOR", "action": actions.AUTOMATION_TOOL,
-                    "args": {"arguments": call.get("arguments") or "{}"},
-                    "reason": "Facility manager asked for ongoing monitoring"}
+        def hold_connector(call: dict[str, Any]) -> str:
+            reason = ("Facility manager asked for ongoing monitoring"
+                      if call.get("name") == actions.AUTOMATION_TOOL else "Tier 3 connector call")
+            item = {"agent": "COORDINATOR", "action": call.get("name"),
+                    "args": {"arguments": call.get("arguments") or "{}"}, "reason": reason}
             approval_id, status = approvals.hold(item)
-            emit_outcome(actions.outcome("COORDINATOR", actions.AUTOMATION_TOOL, actions.APPROVAL, status,
+            emit_outcome(actions.outcome("COORDINATOR", item["action"], actions.APPROVAL, status,
                                          approval_id=approval_id, reason=item["reason"]))
             save_actions(context, memory)
             return approval_id
@@ -639,7 +643,7 @@ def main(agent: AgentSession, context: Context) -> None:
                 "content": "Swarm scan results (JSON):\n" + json.dumps(scan, indent=1),
             }
         )
-        investigate(agent, client, input_items, coordinator, hold_automation)
+        investigate(agent, client, input_items, coordinator, hold_connector)
     finally:
         coordinator.close()
 

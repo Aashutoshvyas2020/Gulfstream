@@ -1,12 +1,16 @@
 """Tier 0-3 actions for Antibody's agents, and the fixed rules that govern them.
 
-Every action an agent can take is listed here, one catalog per area. Action ids follow
-the Governor naming contract `<area>.<verb>_<object>` (see governance.py), so a
-Tier 3 id such as `h2o.shut_valve` matches the high-consequence regexes in
-governance/profiles/.
+Every action an agent can take is listed here, one catalog per area, with what it does
+to the demo readings and how its fix is re-checked. Action ids follow the Governor
+naming contract `<area>.<verb>_<object>` (see governance.py), so a Tier 3 id such as
+`h2o.shut_valve` matches the high-consequence regexes in governance/profiles/.
+
+Each action's tier and operation type come from the building domain adapter
+(building_domain.py), the one table shared with the Governor record. Every action
+here needs a row there; a missing row makes it a Tier 3 WRITE.
 
 Tiers (docs/antibody-notes.md, section 2):
-  0 Cleanup           runs at once, no human
+  0 Cleanup           runs once, no human; a re-read that still shows the problem escalates
   1 Self-correction   runs, re-checks its own fix, at most MAX_FIX_ATTEMPTS times, then escalates
   2 Escalate          the coordinator alerts a human
   3 Human approval    held until a person approves it in a later message of the run series
@@ -24,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
+from . import building_domain
+
 HEALTH_ESCALATE = 70  # building health below this escalates to a human (Tier 2)
 MAX_FIX_ATTEMPTS = 2  # a Tier 1 loop stops and escalates after this many failed fixes
 SETPOINT_LIMIT_PERCENT = 15  # autonomous ventilation / setpoint changes stay within +/- this
@@ -40,13 +46,10 @@ Effect = Callable[[Readings, dict[str, Any]], Readings]
 class Action:
     area: str
     verb_object: str
-    tier: int
     description: str
-    # What Governor records the call as: READ, WRITE, DELETE or EXECUTE
-    operation: str = "WRITE"
     # Simulated effect: returns the readings it changes
     effect: Effect | None = None
-    # Tier 1 re-check on the readings after the fix: True when the fix worked
+    # Re-check on the readings after the action: True when the problem is gone
     check: Callable[[Readings], bool] | None = None
     # Argument name clamped to +/- SETPOINT_LIMIT_PERCENT, if the action takes one
     limited_arg: str | None = None
@@ -54,6 +57,10 @@ class Action:
     @property
     def id(self) -> str:
         return f"{self.area}.{self.verb_object}"
+
+    @property
+    def tier(self) -> int:
+        return building_domain.tier(self.id)
 
 
 def _num(readings: Readings, key: str, default: float = 0.0) -> float:
@@ -65,18 +72,18 @@ def _num(readings: Readings, key: str, default: float = 0.0) -> float:
 
 # Shared Tier 0 cleanups
 def _clear_alert(area: str) -> Action:
-    return Action(area, "clear_alert", CLEANUP, "Clear a stale or duplicate alert for this area")
+    return Action(area, "clear_alert", "Clear a stale or duplicate alert for this area")
 
 
 def _rebaseline(area: str) -> Action:
     return Action(
-        area, "rebaseline_sensor", CLEANUP, "Re-baseline a sensor after it was recalibrated"
+        area, "rebaseline_sensor", "Re-baseline a sensor after it was recalibrated"
     )
 
 
 def _dispatch(area: str) -> Action:
     return Action(
-        area, "dispatch_contractor", APPROVAL, "Dispatch a licensed contractor to this area"
+        area, "dispatch_contractor", "Dispatch a licensed contractor to this area"
     )
 
 
@@ -162,13 +169,13 @@ _register(
     _clear_alert("pwr"),
     _rebaseline("pwr"),
     Action(
-        "pwr", "adjust_ventilation", SELF_CORRECT,
+        "pwr", "adjust_ventilation",
         "Raise battery-room exhaust by up to 15% (args: percent)",
         effect=_pwr_ventilate,
         check=lambda r: _num(r, "hydrogen_ppm") < 100 and _num(r, "cell_temp_c_now") < 35,
         limited_arg="percent",
     ),
-    Action("pwr", "isolate_zone", APPROVAL, "Disconnect the affected battery string from the bus",
+    Action("pwr", "isolate_zone", "Disconnect the affected battery string from the bus",
            effect=_set(string_status="isolated (approved)")),
     _dispatch("pwr"),
 )
@@ -176,13 +183,12 @@ _register(
     _clear_alert("elec"),
     _rebaseline("elec"),
     Action(
-        "elec", "request_thermal_rescan", SELF_CORRECT,
+        "elec", "request_thermal_rescan",
         "Re-read the breaker with the fixed infrared sensor",
-        operation="READ",
         effect=lambda r, args: {"last_infrared_scan": datetime.now().date().isoformat()},
         check=lambda r: _num(r, "breaker_temp_c") < 60,
     ),
-    Action("elec", "trip_breaker", APPROVAL, "Open the overheating breaker (loses its load)",
+    Action("elec", "trip_breaker", "Open the overheating breaker (loses its load)",
            effect=_set(breaker_state="open (approved)", breaker_temp_c=35)),
     _dispatch("elec"),
 )
@@ -190,12 +196,11 @@ _register(
     _clear_alert("wire"),
     _rebaseline("wire"),
     Action(
-        "wire", "request_arc_rescan", SELF_CORRECT, "Re-run arc-fault detection on the branch circuits",
-        operation="READ",
+        "wire", "request_arc_rescan", "Re-run arc-fault detection on the branch circuits",
         effect=_set(),
         check=lambda r: _num(r, "arc_fault_events_7d") == 0 and _num(r, "outlet_temp_anomalies") == 0,
     ),
-    Action("wire", "trip_breaker", APPROVAL, "De-energise the affected branch circuit",
+    Action("wire", "trip_breaker", "De-energise the affected branch circuit",
            effect=_set(circuit_state="de-energised (approved)")),
     _dispatch("wire"),
 )
@@ -203,8 +208,7 @@ _register(
     _clear_alert("fire"),
     _rebaseline("fire"),
     Action(
-        "fire", "recheck_riser_pressure", SELF_CORRECT, "Re-read riser static pressure",
-        operation="READ",
+        "fire", "recheck_riser_pressure", "Re-read riser static pressure",
         effect=_set(),
         check=lambda r: _num(r, "static_pressure_psi") >= _num(r, "baseline_pressure_psi") - 5
         and r.get("control_valves_open", True) is True,
@@ -215,35 +219,34 @@ _register(
     _clear_alert("str"),
     _rebaseline("str"),
     Action(
-        "str", "request_crack_remeasure", SELF_CORRECT, "Re-measure the crack with the gauge",
-        operation="READ",
+        "str", "request_crack_remeasure", "Re-measure the crack with the gauge",
         effect=_set(),
         check=lambda r: _num(r, "crack_width_mm_now") - _num(r, "crack_width_mm_90d_ago") < 0.1,
     ),
-    Action("str", "isolate_zone", APPROVAL, "Close the parking bays around the column",
+    Action("str", "isolate_zone", "Close the parking bays around the column",
            effect=_set(zone_status="closed to parking (approved)")),
     _dispatch("str"),
 )
 _register(
     _clear_alert("lift"),
     Action(
-        "lift", "retry_levelling", SELF_CORRECT, "Run a levelling calibration cycle",
+        "lift", "retry_levelling", "Run a levelling calibration cycle",
         effect=_lift_relevel,
         check=lambda r: _num(r, "levelling_error_mm") <= 3,
     ),
-    Action("lift", "take_out_of_service", APPROVAL, "Take the elevator out of service",
+    Action("lift", "take_out_of_service", "Take the elevator out of service",
            effect=_set(service_status="out of service (approved)")),
     _dispatch("lift"),
 )
 _register(
     _clear_alert("hvac"),
     Action(
-        "hvac", "reset_damper", SELF_CORRECT, "Reset a stuck damper to its commanded position",
+        "hvac", "reset_damper", "Reset a stuck damper to its commanded position",
         effect=_hvac_reset_damper,
         check=_hvac_efficient,
     ),
     Action(
-        "hvac", "adjust_setpoint", SELF_CORRECT,
+        "hvac", "adjust_setpoint",
         "Move the chilled-water setpoint by up to 15% (args: percent)",
         effect=_set(),
         check=_hvac_efficient,
@@ -255,57 +258,55 @@ _register(
     _clear_alert("h2o"),
     _rebaseline("h2o"),
     Action(
-        "h2o", "enable_night_flow_isolation_mode", SELF_CORRECT,
+        "h2o", "enable_night_flow_isolation_mode",
         "Close the floor branch valves while the building is empty",
         effect=_h2o_isolate_night_flow,
         check=_h2o_contained,
     ),
-    Action("h2o", "shut_valve", APPROVAL, "Shut the riser valve (cuts water above it)",
+    Action("h2o", "shut_valve", "Shut the riser valve (cuts water above it)",
            effect=_h2o_shut_valve),
     _dispatch("h2o"),
 )
 _register(
     _clear_alert("env"),
     Action(
-        "env", "request_facade_rescan", SELF_CORRECT, "Re-scan the facade panels",
-        operation="READ",
+        "env", "request_facade_rescan", "Re-scan the facade panels",
         effect=_set(),
         check=lambda r: _num(r, "loose_panel_alerts") == 0,
     ),
-    Action("env", "isolate_zone", APPROVAL, "Cordon the sidewalk below the facade",
+    Action("env", "isolate_zone", "Cordon the sidewalk below the facade",
            effect=_set(sidewalk="cordoned (approved)")),
     _dispatch("env"),
 )
 _register(
     _clear_alert("air"),
     Action(
-        "air", "adjust_ventilation", SELF_CORRECT, "Raise outdoor-air ventilation by up to 15% (args: percent)",
+        "air", "adjust_ventilation", "Raise outdoor-air ventilation by up to 15% (args: percent)",
         effect=_air_ventilate,
         check=lambda r: _num(r, "co2_ppm") <= 800 and _num(r, "tvoc_ppb") <= 500,
         limited_arg="percent",
     ),
-    Action("air", "notify_tenants", APPROVAL, "Message tenants about air quality"),
+    Action("air", "notify_tenants", "Message tenants about air quality"),
 )
 _register(
     # CYBER is audit-only: nothing it may do alone changes the control system
     _clear_alert("cyber"),
-    Action("cyber", "run_audit", CLEANUP, "Audit the controller configuration (no changes)",
-           operation="READ"),
-    Action("cyber", "close_port", APPROVAL, "Close an internet-facing port (args: port)",
+    Action("cyber", "run_audit", "Audit the controller configuration (no changes)"),
+    Action("cyber", "close_port", "Close an internet-facing port (args: port)",
            effect=_cyber_close_port),
-    Action("cyber", "reset_password", APPROVAL, "Reset the controller admin password",
+    Action("cyber", "reset_password", "Reset the controller admin password",
            effect=_set(default_admin_password=False)),
-    Action("cyber", "disable_account", APPROVAL, "Disable a controller account (args: account)"),
-    Action("cyber", "change_firewall_rule", APPROVAL, "Change a BMS firewall rule"),
+    Action("cyber", "disable_account", "Disable a controller account (args: account)"),
+    Action("cyber", "change_firewall_rule", "Change a BMS firewall rule"),
 )
 _register(
     _clear_alert("gen"),
     Action(
-        "gen", "reset_battery_charger", SELF_CORRECT, "Reset the generator's starting-battery charger",
+        "gen", "reset_battery_charger", "Reset the generator's starting-battery charger",
         effect=_gen_reset_charger,
         check=lambda r: _num(r, "starting_battery_voltage_v") >= 12.4,
     ),
-    Action("gen", "take_out_of_service", APPROVAL, "Take the generator out of service for repair",
+    Action("gen", "take_out_of_service", "Take the generator out of service for repair",
            effect=_set(service_status="out of service (approved)")),
     _dispatch("gen"),
 )
@@ -313,27 +314,26 @@ _register(
     _clear_alert("gas"),
     _rebaseline("gas"),
     Action(
-        "gas", "adjust_ventilation", SELF_CORRECT, "Raise garage exhaust by up to 15% (args: percent)",
+        "gas", "adjust_ventilation", "Raise garage exhaust by up to 15% (args: percent)",
         effect=_gas_ventilate,
         check=lambda r: _num(r, "garage_co_ppm") <= 35 and _num(r, "boiler_room_ch4_percent_lel") < 10,
         limited_arg="percent",
     ),
-    Action("gas", "shut_valve", APPROVAL, "Shut the gas main to the boiler room",
+    Action("gas", "shut_valve", "Shut the gas main to the boiler room",
            effect=_set(gas_main="closed (approved)")),
-    Action("gas", "notify_tenants", APPROVAL, "Tell tenants to avoid the affected area"),
+    Action("gas", "notify_tenants", "Tell tenants to avoid the affected area"),
 )
 _register(
     _clear_alert("egress"),
     Action(
-        "egress", "run_emergency_light_test", SELF_CORRECT,
+        "egress", "run_emergency_light_test",
         "Run the 30-second self-test on exit signs and emergency lights",
-        operation="EXECUTE",
         effect=_set(),
         check=lambda r: _num(r, "exit_signs_failed_self_test") == 0
         and _num(r, "emergency_lights_battery_fail") == 0,
     ),
     _dispatch("egress"),
-    Action("egress", "notify_tenants", APPROVAL, "Remind tenants not to prop fire doors open"),
+    Action("egress", "notify_tenants", "Remind tenants not to prop fire doors open"),
 )
 
 # The coordinator's own actions (its connector calls keep Flower's names)
@@ -395,7 +395,7 @@ def apply(record: Any, action: Action, readings: Readings, args: dict[str, Any])
     def run() -> Readings:
         return action.effect(readings, args) if action.effect else {}
 
-    changes = record.call(action.id, run, operation=action.operation) or {}
+    changes = record.call(action.id, run) or {}
     readings.update(changes)
     return changes
 
@@ -417,7 +417,7 @@ def act(record: Any, code: str, proposal: Any, readings: Readings) -> ActResult:
         # Not this agent's tool. If it names another area's system, record the attempt
         # so Governor shows it outside the declared scope, then refuse and escalate.
         if re.fullmatch(r"[a-z0-9]+\.[a-z0-9_]+", action_id):
-            record.call(action_id, lambda: None, operation="WRITE")
+            record.call(action_id, lambda: None)
         result.outcomes.append(
             outcome(code, action_id, ESCALATE, "refused", detail="not one of this agent's tools", reason=reason)
         )
@@ -430,6 +430,13 @@ def act(record: Any, code: str, proposal: Any, readings: Readings) -> ActResult:
 
     if action.tier == CLEANUP:
         result.changes.update(apply(record, action, readings, args))
+        if action.check is not None and not action.check(readings):
+            # A re-read (rescan, remeasure) that still shows the problem goes to a human
+            result.outcomes.append(outcome(code, action.id, CLEANUP, "recheck_failed", reason=reason, detail=note))
+            result.outcomes.append(
+                outcome(code, ESCALATE_ID, ESCALATE, "escalated", detail=f"{action.id} still shows the problem")
+            )
+            return result
         result.outcomes.append(outcome(code, action.id, CLEANUP, "done", reason=reason, detail=note))
         return result
 
@@ -451,8 +458,12 @@ def act(record: Any, code: str, proposal: Any, readings: Readings) -> ActResult:
         )
         return result
 
+    if action.tier != APPROVAL:  # a Tier 2 row: the action is the escalation itself
+        result.outcomes.append(outcome(code, ESCALATE_ID, ESCALATE, "escalated", detail=f"{code} asked to escalate"))
+        return result
+
     # Tier 3: record the attempt (Governor flags it as high-consequence), then hold it
-    record.call(action.id, lambda: None, operation=action.operation)
+    record.call(action.id, lambda: None)
     result.held.append({"agent": code, "action": action.id, "args": args, "reason": reason})
     return result
 
