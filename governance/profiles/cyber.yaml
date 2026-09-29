@@ -1,0 +1,23 @@
+# Antibody: profile for the CYBER agent (building control system audit).
+# CYBER is audit-only: it has no Tier 0/1 actions on the control system.
+# Every change it makes to the control system is Tier 3 and is flagged.
+schema_version: 1
+
+session_intent:
+  required: true
+  # Stricter than the system agents: intent before any action at all.
+  demand_at: session_start
+
+task_boundary:
+  signals: [read_to_write_transition]
+
+high_consequence:
+  tools:
+    - "^close_port:"
+    - "^reset_password:"
+    - "^disable_account:"
+    - "^change_firewall_rule:"
+    - "^push_config:"
+    - "^notify_tenants:"
+    - "^start_automation:"
+  on_match: flag
