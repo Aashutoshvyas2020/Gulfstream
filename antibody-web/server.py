@@ -59,6 +59,7 @@ RELAYED_EVENTS = {
     "antibody.tool",
     "antibody.action",
     "antibody.scan.funnel",
+    "antibody.governance",
     "response.output_text.delta",
 }
 # Account connectors a scan may bind (Flower 1.39: personal workspace on SuperGrid only)

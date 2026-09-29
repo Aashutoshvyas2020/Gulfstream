@@ -199,7 +199,7 @@ h2 { margin: 0 0 14px; font-size: clamp(26px, 3vw, 36px); line-height: 1.08; let
 .agent[data-s="scanning"] .state { color: var(--scan); }
 
 .alert { min-height: 120px; max-height: 460px; overflow: auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2); font-size: 14px; color: var(--ink-2); }
-.alert:empty::before { content: "The coordinator's alert streams here after the 11 agents report."; color: var(--muted); }
+.alert:empty::before { content: "The coordinator's alert streams here after the 14 agents report."; color: var(--muted); }
 .alert h1, .alert h2, .alert h3 { font-size: 15px; color: var(--ink); margin: 14px 0 6px; letter-spacing: 0; }
 .alert strong { color: var(--ink); }
 .alert table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 8px 0; display: block; overflow-x: auto; }
@@ -240,3 +240,37 @@ footer { position: relative; z-index: 5; padding: 40px var(--gutter) 56px; color
   .facts div { min-width: 0; flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } html { scroll-behavior: auto; } }
+
+/* Sentience Governor: actions & approvals, and the badge on each agent card */
+.gov-tag { font: 600 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--scan); border: 1px solid rgba(var(--scan-rgb), .35); border-radius: 999px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
+.gov-funnel { font-size: 13px; color: var(--ink-2); margin: 6px 0 10px; }
+.gov-funnel b { color: var(--ink); }
+.gov-sum { color: var(--scan); font: 500 12px var(--mono); }
+.gov-pending:empty { display: none; }
+.gov-pending { border: 1px solid rgba(var(--infect-rgb), .35); background: var(--infect-soft); border-radius: 12px; padding: 10px; margin-bottom: 10px; }
+.gp-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.gp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; padding: 4px 0; }
+.gp code, .ga code { font: 500 12px var(--mono); }
+.gp span { color: var(--muted); flex: 1; }
+.gov-list { list-style: none; padding: 0; margin: 0; max-height: 360px; overflow: auto; }
+.gov-list .empty { color: var(--muted); font-size: 13px; }
+.ga { border-top: 1px solid var(--line); padding: 8px 0; font-size: 13px; }
+.ga-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.ga-st { margin-left: auto; color: var(--ink-2); font: 500 12px var(--mono); }
+.ga.s-held .ga-st, .ga.s-escalated .ga-st, .ga.s-refused .ga-st { color: var(--infect); }
+.ga.s-fixed .ga-st, .ga.s-done .ga-st, .ga.s-executed .ga-st { color: var(--cell); }
+.ga-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ga p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.tier { font: 500 11px var(--mono); color: var(--muted); }
+.gb { font: 500 11px var(--mono); border-radius: 6px; padding: 2px 6px; }
+.gb.ok { background: var(--cell-soft); color: var(--cell); }
+.gb.hc { background: var(--watch-soft); color: var(--watch); }
+.gb.bad { background: var(--infect-soft); color: var(--infect); }
+.gb.appr { background: var(--scan-soft); color: var(--scan); }
+.gb.wait { color: var(--muted); }
+.agent .gov { font: 600 10px var(--mono); margin-left: 6px; }
+.agent .gov.ok { color: var(--cell); }
+.agent .gov.warn { color: var(--infect); }
+@media (max-width: 640px) { .ga-st { margin-left: 0; } }
+.gp-who { font: 500 12px var(--mono); color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; margin-left: auto; margin-right: 8px; }
+.gp-who input { font: inherit; width: 130px; padding: 4px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--glass-2); color: var(--ink); }

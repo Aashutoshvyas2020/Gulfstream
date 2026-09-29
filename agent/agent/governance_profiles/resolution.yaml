@@ -1,0 +1,11 @@
+# Antibody: which Governor profile governs which agent, keyed on agent_id.
+# Copy or symlink to ~/.sentience/resolution.yaml (Sentience Governor 0.3.2+).
+# First matching pattern wins.
+schema_version: 1
+bindings:
+  - agent_id: "antibody-coordinator*"
+    profile: profiles/coordinator.yaml
+  - agent_id: "antibody-cyber*"
+    profile: profiles/cyber.yaml
+  - agent_id: "antibody-*"
+    profile: profiles/agent.yaml

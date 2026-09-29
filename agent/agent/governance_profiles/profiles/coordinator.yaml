@@ -1,0 +1,20 @@
+# Antibody: profile for the coordinator (ranking, health score, escalation,
+# investigation via web_search/web_fetch and read-only Slack/Notion).
+# It proposes Tier 3 actions; a human approves; the record shows both.
+schema_version: 1
+
+session_intent:
+  required: true
+  demand_at: first_write
+
+task_boundary:
+  signals: [read_to_write_transition]
+
+high_consequence:
+  tools:
+    - "(^|\\.)dispatch_contractor:"
+    - "(^|\\.)notify_tenants:"
+    - "(^|\\.)start_automation:"
+    - "(^|\\.)share_lesson:"
+    - "(^|\\.)execute_approved_action:"
+  on_match: flag

@@ -1,0 +1,30 @@
+# Antibody: profile for the 10 system agents (PWR, ELEC, WIRE, FIRE, STR,
+# LIFT, HVAC, H2O, ENV, AIR). CYBER and the coordinator have their own.
+#
+# Tiers 0-1 (cleanup, self-correction) are declared in each agent's scope at
+# session start and are not listed here. Tier 3 actions are listed below as
+# high-consequence: the record flags them and must show a human approval.
+# Governor records and flags. It never blocks; the approval gate is app code.
+schema_version: 1
+
+session_intent:
+  required: true
+  # An agent may read sensors freely; POL-001 fires on its first write
+  # (Tier 0/1 fix or anything higher) if no intent was declared.
+  demand_at: first_write
+
+task_boundary:
+  # A read-only scan turning into a fix is the moment worth marking.
+  signals: [read_to_write_transition]
+
+high_consequence:
+  # Regex over "<tool_id>:<target_system>". Tier 3: human approval required.
+  tools:
+    - "(^|\\.)trip_breaker:"
+    - "(^|\\.)shut_valve:"
+    - "(^|\\.)isolate_zone:"
+    - "(^|\\.)take_out_of_service:"
+    - "(^|\\.)dispatch_contractor:"
+    - "(^|\\.)notify_tenants:"
+    - "(^|\\.)start_automation:"
+  on_match: flag

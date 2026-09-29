@@ -34,7 +34,7 @@ from openai import APIStatusError, BadRequestError, OpenAI
 
 from . import actions, building_domain
 from .building_data import BUILDING, SNAPSHOT
-from .governance import AgentRecord
+from .governance import AgentRecord, approved_record, pane_line, summaries
 from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
 
 # Flower's own Endeavor model via the Flower Runtime; set ANTIBODY_MODEL to run on a local model, e.g. gemma4:latest
@@ -175,6 +175,7 @@ EVENT_SCAN_RANKED = "antibody.scan.ranked"
 EVENT_TOOL = "antibody.tool"
 EVENT_ACTION = "antibody.action"
 EVENT_FUNNEL = "antibody.scan.funnel"
+EVENT_GOVERNANCE = "antibody.governance"  # one per Governor session: what its record says
 TEXT_DELTA = "response.output_text.delta"
 EMIT_INTERVAL = 0.5  # seconds between batched text events
 
@@ -323,7 +324,12 @@ def run_specialist(
     try:
         # Approved Tier 3 actions run before the assessment, so the report shows their effect
         for item in approved:
-            step = actions.execute_approved(record, code, item, readings)
+            # Its own Governor session, carrying the approval (id and approver)
+            approval = approved_record(f"antibody-{area}", [area], item, run_tag)
+            try:
+                step = actions.execute_approved(approval, code, item, readings)
+            finally:
+                approval.close()
             done.outcomes += step.outcomes
             done.changes.update(step.changes)
 
@@ -627,7 +633,7 @@ def investigate(
 
 
 def run_approved_connector(
-    agent: AgentSession, record: AgentRecord, item: dict[str, Any]
+    agent: AgentSession, item: dict[str, Any], run_tag: str
 ) -> dict[str, Any]:
     """Make a connector call the manager approved; an automation starts shortly after approval."""
     name = item["action"]
@@ -640,6 +646,10 @@ def run_approved_connector(
         ),
     }
     base = dict(approval_id=item["id"], approved_by=item.get("approved_by", ""))
+    # Its own Governor session, carrying the approval (id and approver)
+    record = approved_record(
+        "antibody-coordinator", [*CONNECTOR_REFS, actions.COORDINATOR_AREA], item, run_tag
+    )
     try:
         result = record.call(name, lambda: agent.connectors.call(call))
         if is_error_output(result):
@@ -648,6 +658,8 @@ def run_approved_connector(
     except Exception as exc:
         return actions.outcome("COORDINATOR", name, actions.APPROVAL, "failed",
                                detail=str(exc)[:200], **base)
+    finally:
+        record.close()
     return actions.outcome("COORDINATOR", name, actions.APPROVAL, "executed",
                            detail=call["arguments"], **base)
 
@@ -728,6 +740,15 @@ def investigation_results(input_items: list[dict[str, Any]], limit: int = 1500) 
             results.append({"tool": call.get("name"), "arguments": call.get("arguments"),
                             "result": str(item.get("output", ""))[:limit]})
     return results
+
+
+def emit_governance(agent: AgentSession) -> None:
+    """Send what each closed Governor session recorded: a run event and [governor] log lines."""
+    for summary in summaries():
+        agent.events.emit({"type": EVENT_GOVERNANCE, **summary})
+        line = pane_line(summary)
+        if line:
+            print(line, flush=True)
 
 
 def stream_alert(agent: AgentSession, stream: Any, output_text: list[str] | None = None) -> str:
@@ -856,7 +877,7 @@ def run_scan(agent: AgentSession, context: Context) -> None:
         approved_by_agent: dict[str, list[dict[str, Any]]] = {}
         for item in approved:
             if item["agent"] == "COORDINATOR":
-                emit_outcome(run_approved_connector(agent, coordinator, item))
+                emit_outcome(run_approved_connector(agent, item, run_tag))
             else:
                 approved_by_agent.setdefault(item["agent"], []).append(item)
         if approved or rejected:
@@ -888,6 +909,9 @@ def run_scan(agent: AgentSession, context: Context) -> None:
                     if item["status"] == "escalated":
                         coordinator.call(actions.ESCALATE_ID, lambda: None)
                     emit_outcome(item)
+                # Governor: this agent's record, live, so the console can badge it as it reports
+                emit_governance(agent)
+
         # 2. Rank and score; health below the threshold escalates
         ranked, health = rank_reports(reports)
 
@@ -964,6 +988,10 @@ def run_scan(agent: AgentSession, context: Context) -> None:
             log("investigate: skipped (ANTIBODY_INVESTIGATE=0)")
     finally:
         coordinator.close()
+
+    # Governor: what each agent's record says, as run events and [governor] log lines,
+    # so records written on a hosted SuperGrid machine can still be shown to the operator
+    emit_governance(agent)
 
     # The funnel: actions -> autonomous fixes -> escalations -> human decisions
     counts = actions.funnel(outcomes, memory["pending"])

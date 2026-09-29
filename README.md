@@ -137,17 +137,20 @@ Every agent keeps its own [Sentience Governor](https://github.com/crescerelabs/s
   - `start_automation`;
   - every CYBER change: `close_port`, `reset_password`, and others.
 
-**Setup** (once, on the machine running the SuperLink; needs Sentience Governor 0.3.2.1+, installed with the agent's dependencies):
+**Profiles ship with the app** (`agent/agent/governance_profiles/`, a copy of `governance/` kept identical by a test), so local and SuperGrid runs are governed the same way with no setup. Optional, to use the same profiles from the `sentience` CLI on your machine (needs Sentience Governor 0.3.2.1+):
 
 ```bash
 mkdir -p ~/.sentience && cp -R governance/profiles ~/.sentience/ && cp governance/resolution.yaml ~/.sentience/
 ```
 
-**Governor console** (second terminal): records land in `~/.sentience/traces/antibody/`, one file per agent per scan.
+**Governor console** (second terminal, next to the site). It follows the newest Flower run and prints what each agent's Governor record says: every action, its operation type, the flags Governor raised, and the approval that authorized it. It works for local and SuperGrid runs; on SuperGrid the record files stay on the hosted machine, so agents also send a summary as `[governor]` log lines and `antibody.governance` run events.
 
 ```bash
-sentience open ~/.sentience/traces/antibody/<file>.jsonl --summary
+cd antibody-web && ../agent/.venv/bin/python governor_pane.py            # local SuperLink
+cd antibody-web && ../agent/.venv/bin/python governor_pane.py supergrid  # hosted
 ```
+
+Approved Tier 3 actions run in their own Governor session, whose declared intent carries the approval (`approved by <name> (<id>)`), in its own record file (`...-approved-<id>.jsonl`). A held proposal carries none. Full records on a local run: `sentience open ~/.sentience/traces/antibody/<file>.jsonl --summary`.
 
 Set `ANTIBODY_GOVERNOR=0` to turn recording off. If Governor is missing or fails, scans run unrecorded; nothing stops.
 

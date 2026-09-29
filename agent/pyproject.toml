@@ -17,7 +17,7 @@ packages = ["agent"]
 publisher = "aashu"
 fab-format-version = 1
 flwr-version-target = "1.39.0"
-fab-include = ["agent/**/*.py", "LICENSE"]
+fab-include = ["agent/**/*.py", "agent/**/*.yaml", "LICENSE"]
 
 [tool.flwr.app.config]
 # Scan settings, read by agent_app.configure() from context.run_config. They travel with
