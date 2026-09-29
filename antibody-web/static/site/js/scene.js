@@ -1,6 +1,6 @@
 /* The demo building, modelled on Stanford's Hoover Tower: sandstone library base, a
  * 12-floor tower with tall window slits, an open bell tower where the coordinator lives,
- * and a red-tile dome. Walls are semi-transparent so the 11 infection points show through.
+ * and a red-tile dome. Walls are semi-transparent so the infection points show through.
  * Also: Y-shaped antibody agents, the immune-shield dome (dims and reddens as health
  * drops) and a campus network for the network-immunity chapter.
  * Reads STORY (scroll) and LIVE (real Flower scans). Owner: story & 3D. */

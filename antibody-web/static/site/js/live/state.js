@@ -12,7 +12,7 @@
  */
 
 // Same order as AREAS in ../areas.js and SPECIALISTS in agent/agent/specialists.py
-export const CODES = ["PWR", "ELEC", "WIRE", "FIRE", "STR", "LIFT", "HVAC", "H2O", "ENV", "AIR", "CYBER"];
+export const CODES = ["PWR", "ELEC", "WIRE", "FIRE", "STR", "LIFT", "HVAC", "H2O", "ENV", "AIR", "CYBER", "GEN", "GAS", "EGRESS"];
 
 export const LIVE = {
   active: false,

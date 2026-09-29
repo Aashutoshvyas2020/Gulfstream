@@ -1,4 +1,4 @@
-/* The 11 problem areas as the site shows them, placed on the demo building: a model
+/* The 14 problem areas as the site shows them, placed on the demo building: a model
  * of Stanford's Hoover Tower (library base, 12-floor tower, bell tower, dome) with two
  * levels below ground. Readings are simulated; the building is only the setting.
  * code/consequence match agent/agent/specialists.py; pos is the 3D anchor
@@ -20,6 +20,9 @@ export const AREAS = [
   { code: "ENV",   name: "Facade",          where: "Tower · F10 west face",   threat: "Rain getting in",            consequence: 1.5, pos: [-2.6, 12.0, 0.8],  demo: 0.4 },
   { code: "AIR",   name: "Air quality",     where: "Library reading room",    threat: "CO₂ and VOC build-up",       consequence: 1.5, pos: [-3.2, 1.0, 1.6],   demo: 0.2 },
   { code: "CYBER", name: "BMS controller",  where: "Ground floor · control room", threat: "Default password, open port", consequence: 2, pos: [3.6, 0.6, -2.6], demo: 0.95 },
+  { code: "GEN",   name: "Emergency generator", where: "B1 · generator room",  threat: "Won't start in an outage",   consequence: 3,   pos: [0.0, -0.6, -2.4],  demo: 0.35 },
+  { code: "GAS",   name: "Gas and CO",      where: "B1 boiler room · P1",     threat: "Gas leak, CO build-up",      consequence: 3,   pos: [-3.0, -1.8, -1.6], demo: 0.0 },
+  { code: "EGRESS", name: "Exits and fire doors", where: "Tower · stairs A and B", threat: "Blocked exits, dark exit signs", consequence: 2.5, pos: [1.8, 4.8, 2.55], demo: 0.75 },
 ];
 
 export const statusFor = risk =>
