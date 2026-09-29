@@ -298,6 +298,39 @@ class ScanTest(unittest.TestCase):
         self.assertTrue(of_type(events, "response.output_text.delta"))  # the alert still streamed
         self.assertIn("investigation stopped early", json.dumps(model.inputs[-1]["input"]))
 
+    def test_alert_falls_back_to_plain_code_when_the_model_times_out(self):
+        class SlowAlert(FakeModel):
+            def create(self, **kw):
+                if kw.get("stream"):
+                    return iter([SimpleNamespace(type="response.output_text.delta", delta="partial "),
+                                 SimpleNamespace(type="error", to_dict=lambda: {"type": "error"},
+                                                 code="model_response_timeout")])
+                return super().create(**kw)
+
+        state: dict = {}
+        model = SlowAlert(risk={"H2O": 0.9}, propose={"H2O": {"tool": "h2o.shut_valve", "reason": "riser leak"}})
+        events, _ = scan("Check the building.", state, model)
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertTrue(text.startswith("partial "))
+        self.assertIn("**Building health:", text)
+        self.assertEqual(text.count("| H2O Pipe leak |"), 1)
+        self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("| ") and line[2].isdigit()), 14)
+        self.assertIn("**Needs your approval**", text)
+        self.assertIn("h2o.shut_valve", text)
+        self.assertIn("approve", state[agent_app.STATE_KEY]["last_alert"])  # remembered for follow-ups
+
+    def test_alert_falls_back_when_the_call_itself_fails(self):
+        class DownAlert(FakeModel):
+            def create(self, **kw):
+                if kw.get("stream"):
+                    raise ConnectionError("model service unreachable")
+                return super().create(**kw)
+
+        events, _ = scan("Check the building.", {}, DownAlert())
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertIn("ConnectionError", text)
+        self.assertIn("**Building health:", text)
+
     def test_investigation_can_be_switched_off(self):
         model = FakeModel(automation=True)
         agent_app.INVESTIGATE = False
