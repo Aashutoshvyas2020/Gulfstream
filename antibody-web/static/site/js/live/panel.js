@@ -1,4 +1,4 @@
-/* Live chapter: runs real Flower scans and shows the 11 agents, connectors and the
+/* Live chapter: runs real Flower scans and shows the agents, connectors and the
  * coordinator's alert. Renders into #livePanel. Talks to Flower only through ./api.js
  * and shares results with the 3D scene through ./state.js.
  * Owner: live scan UI. */
@@ -40,11 +40,11 @@ root.innerHTML = `
     <div class="lp-col">
       <div class="lp-stats">
         <div><b id="lpHealth">—</b><span>health</span></div>
-        <div><b id="lpRep">0/11</b><span>reported</span></div>
+        <div><b id="lpRep">0/${CODES.length}</b><span>reported</span></div>
         <div><b id="lpInf" class="c-inf">0</b><span>infected</span></div>
         <div><b id="lpTime">0s</b><span>scan time</span></div>
       </div>
-      <p class="lp-trend" id="lpTrend">Each scan is a real Flower run: 11 agents report, then the coordinator ranks, investigates and alerts.</p>
+      <p class="lp-trend" id="lpTrend">Each scan is a real Flower run: ${CODES.length} agents report, then the coordinator ranks, investigates and alerts.</p>
       <h4>Change a reading before the next scan</h4>
       <div class="chips" id="lpInject">${INJECTIONS.map((x, i) => `<button class="chip${x.heal ? " heal" : ""}" data-i="${i}" aria-pressed="false">${esc(x.label)}</button>`).join("")}</div>
       <h4>Account connectors</h4>
@@ -53,7 +53,7 @@ root.innerHTML = `
       <div class="tools" id="lpTools">${TOOLS.map(t => `<span class="tool" data-t="${t}">${t} <b>0</b></span>`).join("")}</div>
     </div>
     <div class="lp-col">
-      <h4>The 11 agents</h4>
+      <h4>The ${CODES.length} agents</h4>
       <div class="agents" id="lpAgents"></div>
     </div>
     <div class="lp-col lp-wide">
@@ -98,7 +98,7 @@ function recompute() {
   });
   LIVE.provisional = 100 * (1 - weighted / total);
   LIVE.reported = Object.keys(reports).length;
-  $("#lpRep").textContent = `${LIVE.reported}/11`; $("#lpInf").textContent = infected;
+  $("#lpRep").textContent = `${LIVE.reported}/${CODES.length}`; $("#lpInf").textContent = infected;
   $("#lpHealth").textContent = LIVE.reported ? Math.round(LIVE.health ?? LIVE.provisional) : "—";
 }
 
@@ -196,7 +196,7 @@ async function scan(prompt) {
   busy(true, "Starting a Flower run…");
   try { runId = (await startScan({ prompt, overrides, connectors, newSeries })).run_id; }
   catch (e) { return fail(e.message); }
-  busy(true, `Flower run …${runId.slice(-6)}: 11 agents hunting`);
+  busy(true, `Flower run …${runId.slice(-6)}: ${CODES.length} agents hunting`);
   closeStream = streamRun(runId, onEvent);
 }
 
