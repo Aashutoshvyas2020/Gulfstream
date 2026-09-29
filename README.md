@@ -165,4 +165,13 @@ Set `ANTIBODY_GOVERNOR=0` to turn recording off. If Governor is missing or fails
 
 ## Known issue: "No heartbeat received from the task"
 
-On the local SuperLink with Ollama, some scans are killed 1–4 minutes in. Endeavor mode (six specialists at a time) has not been checked for this yet. Fixes so far: alert text is sent in 0.5 s batches (it was about 1,300 events per alert), and follow-ups use run-series state instead of `get_trace()`. The latest fix is **not verified yet**: specialists run one at a time when `ANTIBODY_MODEL` is set, because a local Ollama is serial and parallel calls only queue inside the SuperLink. Run 3–5 scans in a row to confirm. Override with `ANTIBODY_PARALLEL`.
+On the local SuperLink with Ollama, some scans are killed 1–4 minutes in. On SuperGrid with Endeavor it happened too (run `10096390843320514865`, 2026-09-29): all 14 specialists reported, then the run was killed about 7 minutes in during the coordinator's investigation, with no error in the log.
+
+Mitigations in `agent/agent/agent_app.py` (not verified on SuperGrid yet):
+- Every step writes a timestamped line to the run log (`[HH:MM:SS] investigate: turn 1 model call`), so `flwr log <run-id> supergrid --show` shows where a killed run stopped.
+- The investigation is best effort: each of its model calls times out after `ANTIBODY_INVESTIGATE_TIMEOUT` seconds (default 50), and a slow or failed call ends it; the alert still goes out and says what could not be checked.
+- The coordinator's requests are compact JSON without the fields it does not use.
+- `ANTIBODY_INVESTIGATE=0` skips the investigation (demo-safe mode).
+- These settings are read where the app runs: set them on a local SuperLink's shell. On SuperGrid the defaults apply.
+
+Earlier fixes: alert text is sent in 0.5 s batches (it was about 1,300 events per alert), and follow-ups use run-series state instead of `get_trace()`. The latest fix is **not verified yet**: specialists run one at a time when `ANTIBODY_MODEL` is set, because a local Ollama is serial and parallel calls only queue inside the SuperLink. Run 3–5 scans in a row to confirm. Override with `ANTIBODY_PARALLEL`.

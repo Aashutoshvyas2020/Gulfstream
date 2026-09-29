@@ -39,6 +39,14 @@ MODEL = os.environ.get("ANTIBODY_MODEL", "flower-endeavor-v1.0")
 # Built-in connectors, then account connectors (these only work when bound to the run)
 CONNECTOR_REFS = ("web_search", "web_fetch", "start_automation", "slack", "notion")
 MAX_TOOL_TURNS = 4
+# The investigation is best effort: each of its model calls gets this many seconds, and a
+# slow or failed call ends it so the alert still goes out. A call that blocks for about a
+# minute can starve the Flower task heartbeat, and the run is then killed.
+INVESTIGATE_TIMEOUT = float(os.environ.get("ANTIBODY_INVESTIGATE_TIMEOUT", "50"))
+# ANTIBODY_INVESTIGATE=0 skips the connector investigation (demo-safe mode)
+INVESTIGATE = os.environ.get("ANTIBODY_INVESTIGATE", "1") != "0"
+# Report fields the coordinator does not need; left out to keep its model calls small
+COORDINATOR_SKIP_FIELDS = {"actions", "held", "changes", "agent_id", "timestamp", "proposed_action"}
 # Specialist calls in flight at once. A local Ollama answers one request at a time, so
 # parallel calls only queue inside the SuperLink, where they can starve the task heartbeat.
 MAX_PARALLEL_AGENTS = int(
@@ -92,6 +100,15 @@ Rules: use only the readings, reports and tool results provided; do not invent r
 
 
 app = AgentApp()
+
+
+def log(message: str) -> None:
+    """Timestamped line in the run log, so a killed run shows the step it died in."""
+    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {message}", flush=True)
+
+
+def compact(value: Any) -> str:
+    return json.dumps(value, separators=(",", ":"))
 
 
 def extract_json(text: str) -> dict[str, Any] | None:
@@ -199,7 +216,7 @@ def run_specialist(
             try:
                 parsed = assess(client, record, code, readings, prompt)
             except Exception as exc:
-                print(f"{code} re-assessment after its fix failed, keeping the first report: {exc}")
+                log(f"{code} re-assessment after its fix failed, keeping the first report: {exc}")
     except Exception as exc:  # one failed agent must not stop the swarm
         return {
             **report,
@@ -364,7 +381,7 @@ def connector_tools(agent: AgentSession) -> list[dict[str, Any]]:
         try:
             tools.extend(agent.connectors.tools([ref]))
         except Exception as exc:  # unbound account connector or unsupported runtime
-            print(f"Connector {ref} unavailable: {exc}")
+            log(f"Connector {ref} unavailable: {exc}")
     return tools
 
 
@@ -404,18 +421,23 @@ def investigate(
     if not tools:
         return
     allowed = {t["name"] for t in tools if isinstance(t.get("name"), str)}
-    print(f"Coordinator tools: {sorted(allowed)}")
+    log(f"Coordinator tools: {sorted(allowed)}")
 
-    for _ in range(MAX_TOOL_TURNS):
+    for turn in range(1, MAX_TOOL_TURNS + 1):
+        log(f"investigate: turn {turn} model call")
+        started = time.monotonic()
         response = client.responses.create(
             model=MODEL,
             input=input_items,
             instructions=COORDINATOR_INVESTIGATE.format(count=len(SPECIALISTS), top=TOP_ALERTS),
             tools=tools,
             tool_choice="auto",
+            timeout=INVESTIGATE_TIMEOUT,
         )
         output = [item.to_dict() for item in response.output]
         tool_calls = [item for item in output if item.get("type") == "function_call"]
+        log(f"investigate: turn {turn} answered in {time.monotonic() - started:.0f}s, "
+            f"{len(tool_calls)} tool call(s)")
         if not tool_calls:
             return
 
@@ -455,7 +477,7 @@ def investigate(
         input_items.extend(output)
         input_items.extend(outputs)
         if all(is_error_output(o) for o in outputs):
-            print("Every connector call failed, ending the investigation")
+            log("Every connector call failed, ending the investigation")
             return
 
 
@@ -567,6 +589,7 @@ def main(agent: AgentSession, context: Context) -> None:
 
         # 1. Sense and act: specialists in parallel; each report is emitted as it lands
         agent.events.emit({"type": EVENT_SCAN_STARTED, "areas": list(SPECIALISTS)})
+        log(f"sense: {len(SPECIALISTS)} specialists, {MAX_PARALLEL_AGENTS} at a time")
         reports = []
         with ThreadPoolExecutor(max_workers=MAX_PARALLEL_AGENTS) as pool:
             futures = [
@@ -582,6 +605,8 @@ def main(agent: AgentSession, context: Context) -> None:
                 if report["changes"]:
                     memory["overrides"].setdefault(code, {}).update(report["changes"])
                 reports.append(report)
+                log(f"sense: {code} reported ({len(reports)}/{len(SPECIALISTS)})"
+                    + (" FAILED" if report["failed"] else ""))
                 agent.events.emit({"type": EVENT_AGENT_REPORT, "report": report})
                 for item in report["actions"]:
                     if item["status"] == "escalated":
@@ -599,7 +624,7 @@ def main(agent: AgentSession, context: Context) -> None:
         agent.events.emit(
             {"type": EVENT_SCAN_RANKED, "health": health, "previous_health": previous, "ranked": ranked}
         )
-        print(f"Scan done: health {health}/100 (previous {previous}), top area {ranked[0]['subsystem']}")
+        log(f"Scan done: health {health}/100 (previous {previous}), top area {ranked[0]['subsystem']}")
         if health < actions.HEALTH_ESCALATE:
             coordinator.call(actions.ESCALATE_ID, lambda: None)
             emit_outcome(actions.outcome("COORDINATOR", actions.ESCALATE_ID, actions.ESCALATE, "escalated",
@@ -625,9 +650,8 @@ def main(agent: AgentSession, context: Context) -> None:
             "escalation_rule": f"health below {actions.HEALTH_ESCALATE} escalates to a human",
             "agents_failed": [r["subsystem"] for r in ranked if r["failed"]],
             "ranked_reports": [
-                {k: v for k, v in r.items() if k not in {"actions", "held", "changes"}} for r in ranked
+                {k: v for k, v in r.items() if k not in COORDINATOR_SKIP_FIELDS} for r in ranked
             ],
-            "actions": outcomes,
         }
         input_items: list[dict[str, Any]] = []
         if memory["last_prompt"] and memory["last_alert"]:
@@ -640,10 +664,21 @@ def main(agent: AgentSession, context: Context) -> None:
             {
                 "type": "message",
                 "role": "user",
-                "content": "Swarm scan results (JSON):\n" + json.dumps(scan, indent=1),
+                "content": "Swarm scan results (JSON):\n" + compact(scan),
             }
         )
-        investigate(agent, client, input_items, coordinator, hold_connector)
+        if INVESTIGATE:
+            try:
+                investigate(agent, client, input_items, coordinator, hold_connector)
+            except Exception as exc:  # best effort: the alert goes out without it
+                log(f"investigate: stopped ({type(exc).__name__}: {str(exc)[:200]})")
+                input_items.append(
+                    {"type": "message", "role": "user",
+                     "content": "The investigation stopped early (the model service was slow or "
+                     "unreachable), so standards, Slack and Notion could not be checked. Say so in the alert."}
+                )
+        else:
+            log("investigate: skipped (ANTIBODY_INVESTIGATE=0)")
     finally:
         coordinator.close()
 
@@ -655,11 +690,12 @@ def main(agent: AgentSession, context: Context) -> None:
             "type": "message",
             "role": "user",
             "content": "Actions and approvals (JSON):\n"
-            + json.dumps({"funnel": counts, "actions": outcomes, "pending_approvals": memory["pending"]}, indent=1),
+            + compact({"funnel": counts, "actions": outcomes, "pending_approvals": memory["pending"]}),
         }
     )
 
     # 4. Alert
+    log("alert: model call")
     stream = client.responses.create(
         model=MODEL,
         input=input_items,
@@ -667,5 +703,6 @@ def main(agent: AgentSession, context: Context) -> None:
         stream=True,
     )
     alert = stream_alert(agent, stream)
+    log(f"alert: done, {len(alert)} characters")
     save_memory(context, memory, health, ranked[0]["subsystem"], prompt, alert)
     print(alert)

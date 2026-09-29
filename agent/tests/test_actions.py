@@ -284,6 +284,30 @@ class ScanTest(unittest.TestCase):
         h = lambda ev: of_type(ev, "antibody.scan.ranked")[0]["health"]
         self.assertLess(h(failed), h(healthy))
 
+    def test_slow_investigation_does_not_stop_the_alert(self):
+        class SlowCoordinator(FakeModel):
+            def create(self, **kw):
+                if kw.get("tools") is not None:
+                    self.timeouts = kw.get("timeout")
+                    raise TimeoutError("model service slow")
+                return super().create(**kw)
+
+        model = SlowCoordinator()
+        events, _ = scan("Check the building.", {}, model)
+        self.assertEqual(model.timeouts, agent_app.INVESTIGATE_TIMEOUT)
+        self.assertTrue(of_type(events, "response.output_text.delta"))  # the alert still streamed
+        self.assertIn("investigation stopped early", json.dumps(model.inputs[-1]["input"]))
+
+    def test_investigation_can_be_switched_off(self):
+        model = FakeModel(automation=True)
+        agent_app.INVESTIGATE = False
+        try:
+            events, connectors = scan("Watch it 24/7", {}, model)
+        finally:
+            agent_app.INVESTIGATE = True
+        self.assertEqual(of_type(events, "antibody.tool"), [])
+        self.assertTrue(of_type(events, "response.output_text.delta"))
+
     def test_low_health_escalates(self):
         events, _ = scan("Check the building.", {}, FakeModel(risk={c: 0.6 for c in SPECIALISTS}))
         escalations = [e for e in of_type(events, "antibody.action") if e["action"] == actions.ESCALATE_ID]
