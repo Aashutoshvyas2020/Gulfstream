@@ -58,8 +58,10 @@ MAX_TOOL_TURNS = 2
 # slow or failed call ends it so the alert still goes out. A call that blocks for about a
 # minute can starve the Flower task heartbeat, and the run is then killed.
 INVESTIGATE_TIMEOUT = 30.0
-# False skips the connector investigation (demo-safe mode)
-INVESTIGATE = True
+# The connector investigation (safety standards via web_search / web_fetch, Slack,
+# Notion). Off by default: on SuperGrid Endeavor has not finished it inside its time
+# limit, so it only added 30 s per scan. Turn it on to show the connectors.
+INVESTIGATE = False
 # The alert call gets this many seconds (between streamed chunks) before the plain-code
 # alert takes over. Flower's own model timeout is about 5 minutes, and a chat or console
 # connection that hears nothing for that long is dropped.
@@ -72,6 +74,10 @@ ALERT_MAX_OUTPUT_TOKENS = 1800
 # After a Tier 1 fix passes its re-check, the report is updated in code; True asks the
 # model to re-assess the area instead (one more call per fixed agent)
 REASSESS_AFTER_FIX = False
+# True has the model write the top alerts; False (default) has code write them from the
+# specialists' own findings, evidence and fixes (also model-written). On SuperGrid the
+# alert call has not finished inside ALERT_TIMEOUT, so it only added a minute.
+MODEL_ALERT = False
 # A small antibody.progress event this often keeps the run's event stream from going quiet
 KEEPALIVE_SECONDS = 15
 EVENT_PROGRESS = "antibody.progress"
@@ -81,7 +87,7 @@ MODEL_END_EVENTS = {"response.completed", "response.incomplete", "response.faile
 COORDINATOR_SKIP_FIELDS = {"actions", "held", "changes", "agent_id", "timestamp", "proposed_action"}
 # Specialist calls in flight at once. A local Ollama answers one request at a time, so
 # parallel calls only queue inside the SuperLink, where they can starve the task heartbeat.
-MAX_PARALLEL_AGENTS = 1 if "ANTIBODY_MODEL" in os.environ else 10
+MAX_PARALLEL_AGENTS = 1 if "ANTIBODY_MODEL" in os.environ else 14
 TOP_ALERTS = 2
 
 # run config key -> (module setting, type); env var is ANTIBODY_<KEY with - as _>
@@ -96,6 +102,7 @@ SETTINGS: dict[str, tuple[str, type]] = {
     "alert-max-output-tokens": ("ALERT_MAX_OUTPUT_TOKENS", int),
     "reasoning-effort": ("REASONING_EFFORT", str),
     "reassess-after-fix": ("REASSESS_AFTER_FIX", bool),
+    "model-alert": ("MODEL_ALERT", bool),
 }
 # Legacy env names kept working
 ENV_ALIASES = {"parallel-agents": "ANTIBODY_PARALLEL"}
@@ -767,6 +774,10 @@ def stream_alert(agent: AgentSession, stream: Any, output_text: list[str] | None
     return "".join(output_text)
 
 
+class _CodeAlert(Exception):
+    """Internal: model-alert is off, so code writes the top alerts."""
+
+
 class KeepAlive:
     """Emit a small progress event every KEEPALIVE_SECONDS while a scan runs.
 
@@ -982,9 +993,11 @@ def run_scan(agent: AgentSession, context: Context) -> None:
             "start_automation": automation,
         }),
     })
-    log(f"alert: model call ({len(top)} top reports)")
     streamed: list[str] = []
     try:
+        if not MODEL_ALERT:
+            raise _CodeAlert()
+        log(f"alert: model call ({len(top)} top reports)")
         stream = create_response(
             client,
             ALERT_MAX_OUTPUT_TOKENS,
@@ -996,6 +1009,11 @@ def run_scan(agent: AgentSession, context: Context) -> None:
         )
         middle = stream_alert(agent, stream, streamed)
         log(f"alert: done, {len(middle)} characters from the model")
+    except _CodeAlert:
+        log("alert: written by code from the specialists' findings (model-alert = false)")
+        extra = code_top_alerts(top)
+        agent.events.emit({"type": TEXT_DELTA, "delta": extra})
+        middle = extra
     except Exception as exc:
         reason = "the model service timed out" if "timeout" in str(exc).lower() else type(exc).__name__
         log(f"alert: model failed ({str(exc)[:200]}), code writes the top alerts")

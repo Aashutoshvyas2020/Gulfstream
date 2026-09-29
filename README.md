@@ -171,7 +171,7 @@ Speed and settings (target: a hosted scan under about 4 minutes):
 - Scan settings live in Flower run config, `[tool.flwr.app.config]` in `agent/pyproject.toml`, read from `context.run_config`, so they reach SuperGrid runs. `ANTIBODY_<NAME>` environment variables (e.g. `ANTIBODY_TOP_ALERTS=3`) override them on a local SuperLink. The run log starts with the settings in effect.
 - All 14 specialists run at once (`parallel-agents`; one at a time on Ollama). Each asks for low reasoning effort and at most `specialist-max-output-tokens`; an option the model service rejects is dropped and the call retried.
 - A Tier 1 fix that passes its re-check updates the report in code instead of a second model call (`reassess-after-fix`).
-- The coordinator: at most 2 tool turns, top 2 alerts.
+- The coordinator: at most 2 tool turns, top 2 alerts. On SuperGrid Endeavor has not finished the investigation (30 s) or the alert (60 s) inside their limits in any hosted run, so both are off by default: `investigate = false` and `model-alert = false`. Code then writes the top alerts from the specialists' own (model-written) findings, evidence and fixes. Set either to `true` in run config to show the connectors or a model-written alert.
 - The alert: code writes the health, the ranked table, what the agents did and the approvals at once; the model only writes the top alerts, from the top reports and trimmed investigation results. Exactly one `response.completed` ends every scan, and model error events are never relayed, so `flwr chat` and the console never report a failure when the fallback is used.
 
 Mitigations in `agent/agent/agent_app.py` (not verified on SuperGrid yet):

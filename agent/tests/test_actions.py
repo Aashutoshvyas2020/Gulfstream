@@ -241,12 +241,17 @@ def of_type(events, kind):
 
 
 class ScanTest(unittest.TestCase):
+    """Full scans with the investigation and the model-written alert switched on."""
+
     def setUp(self):
         self._enabled = governance.ENABLED
         governance.ENABLED = False  # Governor has its own test below
+        self._flags = agent_app.INVESTIGATE, agent_app.MODEL_ALERT
+        agent_app.INVESTIGATE = agent_app.MODEL_ALERT = True
 
     def tearDown(self):
         governance.ENABLED = self._enabled
+        agent_app.INVESTIGATE, agent_app.MODEL_ALERT = self._flags
 
     def test_leak_is_held_then_approved_in_the_next_message(self):
         state: dict = {}
@@ -418,6 +423,7 @@ class SpeedTest(unittest.TestCase):
         self._enabled = governance.ENABLED
         governance.ENABLED = False
         self._saved = {name: getattr(agent_app, name) for name, _ in agent_app.SETTINGS.values()}
+        agent_app.INVESTIGATE = agent_app.MODEL_ALERT = True
 
     def tearDown(self):
         governance.ENABLED = self._enabled
@@ -439,7 +445,22 @@ class SpeedTest(unittest.TestCase):
         import tomllib
         config = tomllib.loads((REPO / "agent" / "pyproject.toml").read_text())["tool"]["flwr"]["app"]["config"]
         self.assertEqual(set(config), set(agent_app.SETTINGS))
-        self.assertEqual(config["parallel-agents"], 10)
+        self.assertEqual(config["parallel-agents"], 14)
+        self.assertIs(config["investigate"], False)
+        self.assertIs(config["model-alert"], False)
+
+    def test_default_scan_makes_only_specialist_model_calls(self):
+        agent_app.INVESTIGATE = agent_app.MODEL_ALERT = False
+        model = FakeModel(risk={"H2O": 0.9, "PWR": 0.8})
+        seen = []
+        original = model.create
+        model.create = lambda **kw: (seen.append(kw), original(**kw))[1]
+        events, _ = scan("Check the building.", {}, model)
+        self.assertEqual(len(seen), 14)  # one per specialist, nothing else
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertIn("**Top 2 alerts**", text)
+        self.assertNotIn("did not finish", text)
+        self.assertEqual([e["type"] for e in events].count("response.completed"), 1)
 
     def test_rejected_speed_option_is_dropped_and_retried(self):
         from openai import BadRequestError
