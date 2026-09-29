@@ -35,6 +35,8 @@ reasoning-effort = "low"
 reassess-after-fix = false
 model-alert = false  # true: Endeavor writes the top alerts (code writes them if it times out)
 notion-reports = true  # search Notion (Flower connector) for tenant reports and work orders
+slack-reports = true  # search Slack (Flower connector) for messages about the at-risk areas
+write-actions = true  # propose a Notion work order and a Slack reply (Tier 3; the console writes them)
 
 [tool.flwr.app.components]
 agentapp = "agent.agent_app:app"

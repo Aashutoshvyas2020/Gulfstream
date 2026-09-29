@@ -88,11 +88,15 @@ def match(found: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
     return matched
 
 
-def section(matched: dict[str, list[dict[str, str]]], ranked: list[dict[str, Any]]) -> str:
-    """The alert's Notion section, in ranked order; says when a report confirms a finding."""
+def section(
+    matched: dict[str, list[dict[str, str]]],
+    ranked: list[dict[str, Any]],
+    heading: str = "Notion: tenant reports and work orders",
+) -> str:
+    """An alert section of human reports, in ranked order; says when one confirms a finding."""
     if not matched:
         return ""
-    lines = ["**Notion: tenant reports and work orders**"]
+    lines = [f"**{heading}**"]
     for report in ranked:
         for page in matched.get(report["subsystem"], []):
             at_risk = not report["failed"] and report["risk_score"] >= 0.3

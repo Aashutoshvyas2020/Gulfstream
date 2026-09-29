@@ -48,6 +48,7 @@ ACTIONS: dict[str, tuple[str, int]] = {
     "take_out_of_service": (EXECUTE, 3),
     "dispatch_contractor": (EXECUTE, 3),
     "notify_tenants": (WRITE, 3),
+    "create_work_order": (WRITE, 3),  # a Notion work order, written by the console after approval
     "share_lesson": (WRITE, 3),
     "execute_approved_action": (EXECUTE, 3),
     # Tier 3: every CYBER change to the building control system

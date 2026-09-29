@@ -25,6 +25,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -32,7 +33,7 @@ from flwr.agentapp import AgentApp, AgentSession
 from flwr.app import ConfigRecord, Context
 from openai import APIStatusError, BadRequestError, OpenAI
 
-from . import actions, building_domain, notion_reports
+from . import actions, building_domain, notion_reports, slack_reports
 from .building_data import BUILDING, SNAPSHOT
 from .governance import AgentRecord, approved_record, pane_line, summaries
 from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
@@ -81,6 +82,16 @@ MODEL_ALERT = False
 # Search Notion (Flower's Notion connector) once per scan for tenant reports and work
 # orders, and match their titles to the areas. Skipped quietly when Notion is not connected.
 NOTION_REPORTS = True
+# The same for Slack messages (Flower's Slack connector), searched by at-risk area
+SLACK_REPORTS = True
+# Propose Tier 3 writes back to the humans: a Notion work order for the most urgent
+# problem, and a Slack reply to a matching tenant message. After approval they are
+# carried out by the web console on the operator's laptop (antibody-web/local_writes.py),
+# which holds the Notion and Slack tokens; Flower's connectors are read-only in 1.39.
+WRITE_ACTIONS = True
+WORK_ORDER_ACTION = "coordinator.create_work_order"
+SLACK_REPLY_ACTION = "coordinator.notify_tenants"
+LOCAL_WRITE_ACTIONS = {WORK_ORDER_ACTION, SLACK_REPLY_ACTION}
 # A small antibody.progress event this often keeps the run's event stream from going quiet
 KEEPALIVE_SECONDS = 15
 EVENT_PROGRESS = "antibody.progress"
@@ -107,6 +118,8 @@ SETTINGS: dict[str, tuple[str, type]] = {
     "reassess-after-fix": ("REASSESS_AFTER_FIX", bool),
     "model-alert": ("MODEL_ALERT", bool),
     "notion-reports": ("NOTION_REPORTS", bool),
+    "slack-reports": ("SLACK_REPORTS", bool),
+    "write-actions": ("WRITE_ACTIONS", bool),
 }
 # Legacy env names kept working
 ENV_ALIASES = {"parallel-agents": "ANTIBODY_PARALLEL"}
@@ -636,32 +649,146 @@ def investigate(
             return
 
 
-def lookup_notion(agent: AgentSession, record: AgentRecord) -> dict[str, list[dict[str, str]]]:
-    """One Notion search through Flower's connector; area -> matching report titles."""
+# Account-connector lookups (Notion, Slack) get this long per call; a connector that hangs
+# (seen with Slack on SuperGrid) is abandoned and the scan carries on without it
+CONNECTOR_TIMEOUT = 20.0
+_connector_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="connector")
+
+
+def with_timeout(fn: Callable[[], Any], seconds: float) -> Any:
+    """Run fn in a worker thread; TimeoutError if it takes longer (the thread is left to finish)."""
+    future = _connector_pool.submit(fn)
     try:
-        tools = agent.connectors.tools(["notion"])
+        return future.result(timeout=seconds)
+    except FutureTimeout:
+        raise TimeoutError(f"no answer in {seconds:.0f} s") from None
+
+
+def has_tool(agent: AgentSession, ref: str, tool: str) -> bool:
+    """Whether an account connector is bound to this run and offers `tool`."""
+    try:
+        tools = with_timeout(lambda: agent.connectors.tools([ref]), CONNECTOR_TIMEOUT)
     except Exception as exc:  # not connected on this account, or not on this SuperLink
-        log(f"notion: not connected ({str(exc)[:120]})")
-        return {}
-    if not any(t.get("name") == notion_reports.SEARCH_TOOL for t in tools):
-        log("notion: search tool not available")
-        return {}
-    call = notion_reports.search_call()
-    agent.events.emit({"type": EVENT_TOOL, "name": call["name"], "status": "called",
-                       "detail": "tenant reports and work orders"})
+        log(f"{ref}: not connected ({str(exc)[:120]})")
+        return False
+    if not any(t.get("name") == tool for t in tools):
+        log(f"{ref}: {tool} not available")
+        return False
+    return True
+
+
+def connector_output(agent: AgentSession, record: AgentRecord, call: dict[str, Any], detail: str) -> Any:
+    """One connector call, shown as an antibody.tool call and recorded; its output, or None."""
+    agent.events.emit({"type": EVENT_TOOL, "name": call["name"], "status": "called", "detail": detail})
     try:
-        result = record.call(call["name"], lambda: agent.connectors.call(call))
+        result = record.call(call["name"], lambda: with_timeout(lambda: agent.connectors.call(call), CONNECTOR_TIMEOUT))
         failed = is_error_output(result)
     except Exception as exc:
         result, failed = {"output": json.dumps({"error": str(exc)})}, True
     agent.events.emit({"type": EVENT_TOOL, "name": call["name"], "status": "failed" if failed else "ok"})
     if failed:
-        log(f"notion: search failed ({str(result.get('output', ''))[:160]})")
-        return {}
-    found = notion_reports.pages(result.get("output"))
+        log(f"{call['name']}: failed ({str(result.get('output', ''))[:160]})")
+        return None
+    return result.get("output")
+
+
+def lookup_notion(agent: AgentSession, record: AgentRecord) -> dict[str, list[dict[str, str]]] | None:
+    """One Notion search through Flower's connector; area -> matching report titles.
+
+    None when Notion is not connected to this run (or the search failed).
+    """
+    if not has_tool(agent, "notion", notion_reports.SEARCH_TOOL):
+        return None
+    output = connector_output(agent, record, notion_reports.search_call(), "tenant reports and work orders")
+    if output is None:
+        return None
+    found = notion_reports.pages(output)
     matched = notion_reports.match(found)
     log(f"notion: {len(found)} page(s) shared, matched {sorted(matched) or 'none'}")
     return matched
+
+
+def lookup_slack(
+    agent: AgentSession, record: AgentRecord, ranked: list[dict[str, Any]]
+) -> dict[str, list[dict[str, str]]]:
+    """Slack searches for the at-risk areas' words; area -> matching messages."""
+    words = slack_reports.queries(ranked)
+    if not words or not has_tool(agent, "slack", slack_reports.SEARCH_TOOL):
+        return {}
+    found: list[dict[str, str]] = []
+    for index, word in enumerate(words):
+        output = connector_output(agent, record, slack_reports.search_call(word, index), word)
+        if output is None:
+            return {}  # a failed or timed-out search: Slack is not usable this scan
+        found += slack_reports.messages(output) if output is not None else []
+    matched = slack_reports.match_messages(found)
+    log(f"slack: searched {words}, {len(found)} message(s), matched {sorted(matched) or 'none'}")
+    return matched
+
+
+def write_proposals(
+    ranked: list[dict[str, Any]],
+    notion_matches: dict[str, list[dict[str, str]]] | None,
+    slack_matches: dict[str, list[dict[str, str]]],
+) -> list[dict[str, Any]]:
+    """Tier 3 writes to propose: a Notion work order for the most urgent problem (only when
+    Notion is connected), and a Slack reply to the first tenant message that matches an
+    at-risk area."""
+    proposals: list[dict[str, Any]] = []
+    notion_connected = notion_matches is not None
+    urgent = [r for r in ranked if not r["failed"]
+              and actions.is_urgent(r["risk_score"], r["time_to_failure_days"])]
+    if urgent and notion_connected:
+        r = urgent[0]
+        existing = [p["title"] for p in (notion_matches or {}).get(r["subsystem"], [])]
+        proposals.append({
+            "agent": "COORDINATOR",
+            "action": WORK_ORDER_ACTION,
+            "args": {
+                "title": f"Antibody {r['subsystem']} ({r['name']}): {r['finding']}"[:180],
+                "details": f"Evidence: {r['evidence']}\nFix: {r['recommended_action']}"[:1800],
+                "area": r["subsystem"],
+                "related": existing,
+            },
+            "reason": f"Open a work order in Notion for the most urgent problem ({r['subsystem']}, risk {r['risk_score']:.2f})",
+        })
+    for r in ranked:
+        if r["failed"] or r["risk_score"] < 0.3:
+            continue
+        message = next((m for m in slack_matches.get(r["subsystem"], []) if m.get("channel_id") and m.get("ts")), None)
+        if message:
+            proposals.append({
+                "agent": "COORDINATOR",
+                "action": SLACK_REPLY_ACTION,
+                "args": {
+                    "channel": message["channel_id"],
+                    "thread_ts": message["ts"],
+                    "text": (f"Thanks for reporting this. Antibody's {r['name'].lower()} agent confirms it: "
+                             f"{r['finding']} A work order is being opened and facilities is on it."),
+                    "area": r["subsystem"],
+                    "replying_to": message["title"],
+                },
+                "reason": f"Reply in Slack to the tenant message about {r['subsystem']}",
+            })
+            break
+    return proposals
+
+
+def hand_off_approved(item: dict[str, Any], run_tag: str) -> dict[str, Any]:
+    """An approved Notion or Slack write: recorded here, carried out by the console.
+
+    The console holds the tokens on the operator's laptop and reports the result as an
+    antibody.action with status executed or failed.
+    """
+    record = approved_record("antibody-coordinator", [*CONNECTOR_REFS, actions.COORDINATOR_AREA], item, run_tag)
+    try:
+        record.call(item["action"], lambda: None)
+    finally:
+        record.close()
+    return actions.outcome("COORDINATOR", item["action"], actions.APPROVAL, "approved",
+                           approval_id=item["id"], approved_by=item.get("approved_by", ""),
+                           args=item.get("args", {}),
+                           detail="handed to the console on the operator's laptop to carry out")
 
 
 def run_approved_connector(
@@ -908,7 +1035,9 @@ def run_scan(agent: AgentSession, context: Context) -> None:
                                          approval_id=item["id"]))
         approved_by_agent: dict[str, list[dict[str, Any]]] = {}
         for item in approved:
-            if item["agent"] == "COORDINATOR":
+            if item["agent"] == "COORDINATOR" and item["action"] in LOCAL_WRITE_ACTIONS:
+                emit_outcome(hand_off_approved(item, run_tag))
+            elif item["agent"] == "COORDINATOR":
                 emit_outcome(run_approved_connector(agent, item, run_tag))
             else:
                 approved_by_agent.setdefault(item["agent"], []).append(item)
@@ -973,7 +1102,16 @@ def run_scan(agent: AgentSession, context: Context) -> None:
                                          detail=f"building health {health} is below {actions.HEALTH_ESCALATE}"))
 
         # Tenant reports and work orders from Notion, matched to the areas
-        notion_matches = lookup_notion(agent, coordinator) if NOTION_REPORTS else {}
+        notion_found = lookup_notion(agent, coordinator) if NOTION_REPORTS else None
+        notion_matches = notion_found or {}
+        slack_matches = lookup_slack(agent, coordinator, ranked) if SLACK_REPORTS else {}
+        if WRITE_ACTIONS:
+            for item in write_proposals(ranked, notion_found, slack_matches):
+                coordinator.call(item["action"], lambda: None)  # the attempt, flagged by Governor
+                approval_id, status = approvals.hold(item)
+                emit_outcome(actions.outcome("COORDINATOR", item["action"], actions.APPROVAL, status,
+                                             approval_id=approval_id, reason=item["reason"]))
+            save_actions(context, memory)
 
         # 3. Investigate with connectors
         def hold_connector(call: dict[str, Any]) -> str:
@@ -1055,6 +1193,7 @@ def run_scan(agent: AgentSession, context: Context) -> None:
             "notes": notes,
             "start_automation": automation,
             "notion_reports": notion_matches,
+            "slack_messages": slack_matches,
         }),
     })
     streamed: list[str] = []
@@ -1087,7 +1226,8 @@ def run_scan(agent: AgentSession, context: Context) -> None:
         agent.events.emit({"type": TEXT_DELTA, "delta": extra})
         middle = "".join(streamed) + extra
     notion = notion_reports.section(notion_matches, ranked)
-    closing = "".join("\n\n" + part for part in (notion, tail) if part)
+    slack = notion_reports.section(slack_matches, ranked, "Slack: tenant and facilities messages")
+    closing = "".join("\n\n" + part for part in (notion, slack, tail) if part)
     if closing:
         agent.events.emit({"type": TEXT_DELTA, "delta": closing})
     alert = head + middle + closing
