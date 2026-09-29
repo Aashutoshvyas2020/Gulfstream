@@ -23,13 +23,13 @@ fab-include = ["agent/**/*.py", "LICENSE"]
 # Scan settings, read by agent_app.configure() from context.run_config. They travel with
 # the app to SuperGrid; ANTIBODY_<NAME> environment variables override them on a local
 # SuperLink (e.g. ANTIBODY_PARALLEL_AGENTS=1 for Ollama, which is automatic).
-parallel-agents = 14
+parallel-agents = 10
 max-tool-turns = 2
 top-alerts = 2
 investigate = true
 investigate-timeout = 30.0
 alert-timeout = 60.0
-specialist-max-output-tokens = 1000
+specialist-max-output-tokens = 2000
 alert-max-output-tokens = 1800
 reasoning-effort = "low"
 reassess-after-fix = false

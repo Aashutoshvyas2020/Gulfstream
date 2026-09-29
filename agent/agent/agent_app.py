@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -29,7 +30,7 @@ from typing import Any, Callable
 
 from flwr.agentapp import AgentApp, AgentSession
 from flwr.app import ConfigRecord, Context
-from openai import BadRequestError, OpenAI
+from openai import APIStatusError, BadRequestError, OpenAI
 
 from . import actions, building_domain
 from .building_data import BUILDING, SNAPSHOT
@@ -65,7 +66,7 @@ INVESTIGATE = True
 ALERT_TIMEOUT = 60.0
 # Specialists only return a small JSON report: cap their output and ask for low reasoning
 # effort. If the model service rejects either, the call is retried without them.
-SPECIALIST_MAX_OUTPUT_TOKENS = 1000
+SPECIALIST_MAX_OUTPUT_TOKENS = 2000
 REASONING_EFFORT = "low"  # "" sends no reasoning setting
 ALERT_MAX_OUTPUT_TOKENS = 1800
 # After a Tier 1 fix passes its re-check, the report is updated in code; True asks the
@@ -80,7 +81,7 @@ MODEL_END_EVENTS = {"response.completed", "response.incomplete", "response.faile
 COORDINATOR_SKIP_FIELDS = {"actions", "held", "changes", "agent_id", "timestamp", "proposed_action"}
 # Specialist calls in flight at once. A local Ollama answers one request at a time, so
 # parallel calls only queue inside the SuperLink, where they can starve the task heartbeat.
-MAX_PARALLEL_AGENTS = 1 if "ANTIBODY_MODEL" in os.environ else 14
+MAX_PARALLEL_AGENTS = 1 if "ANTIBODY_MODEL" in os.environ else 10
 TOP_ALERTS = 2
 
 # run config key -> (module setting, type); env var is ANTIBODY_<KEY with - as _>
@@ -238,13 +239,37 @@ def clamp01(value: Any) -> float:
 def assess(
     client: OpenAI, record: AgentRecord, code: str, readings: dict, prompt: str
 ) -> dict[str, Any]:
-    """One model call: the specialist's report on its area, as parsed JSON."""
+    """The specialist's report on its area, as parsed JSON.
+
+    Retried once when the model service fails (5xx, e.g. "Flower Endeavor providers
+    failed" under load) or the reply is cut off by the output cap, then without the cap.
+    """
+    for attempt in (1, 2):
+        cap = SPECIALIST_MAX_OUTPUT_TOKENS if attempt == 1 else 0
+        try:
+            parsed = _assess_once(client, record, code, readings, prompt, cap)
+        except APIStatusError as exc:
+            if attempt == 2 or exc.status_code < 500:
+                raise
+            log(f"{code}: model service error {exc.status_code}, retrying once")
+            time.sleep(random.uniform(2, 5))
+            continue
+        if parsed is not None:
+            return parsed
+        if attempt == 1:
+            log(f"{code}: reply was not a JSON object (cut off?), retrying without the output cap")
+    raise ValueError("reply was not a JSON object")
+
+
+def _assess_once(
+    client: OpenAI, record: AgentRecord, code: str, readings: dict, prompt: str, cap: int
+) -> dict[str, Any] | None:
     spec = SPECIALISTS[code]
     response = record.call(
         f"{code.lower()}.assess",
         lambda: create_response(
             client,
-            SPECIALIST_MAX_OUTPUT_TOKENS,
+            cap,
             model=MODEL,
             instructions=SPECIALIST_INSTRUCTIONS.format(
                 code=code, count=len(SPECIALISTS), tools=actions.tools_prompt(code), **spec
@@ -256,10 +281,7 @@ def assess(
             ),
         ),
     )
-    parsed = extract_json(response.output_text)
-    if parsed is None:
-        raise ValueError("reply was not a JSON object")
-    return parsed
+    return extract_json(response.output_text)
 
 
 def run_specialist(

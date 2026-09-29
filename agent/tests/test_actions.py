@@ -439,7 +439,7 @@ class SpeedTest(unittest.TestCase):
         import tomllib
         config = tomllib.loads((REPO / "agent" / "pyproject.toml").read_text())["tool"]["flwr"]["app"]["config"]
         self.assertEqual(set(config), set(agent_app.SETTINGS))
-        self.assertEqual(config["parallel-agents"], 14)
+        self.assertEqual(config["parallel-agents"], 10)
 
     def test_rejected_speed_option_is_dropped_and_retried(self):
         from openai import BadRequestError
@@ -468,6 +468,29 @@ class SpeedTest(unittest.TestCase):
         self.assertTrue(specialist)
         self.assertEqual(specialist[0]["max_output_tokens"], agent_app.SPECIALIST_MAX_OUTPUT_TOKENS)
         self.assertEqual(specialist[0]["reasoning"], {"effort": "low"})
+
+    def test_cut_off_or_failed_specialist_is_retried_once(self):
+        from openai import APIStatusError
+        import httpx
+        replies = {"GEN": ["cut off {", "ok"], "PWR": ["502", "ok"]}
+
+        class Flaky(FakeModel):
+            def create(self, **kw):
+                code = kw.get("instructions", "").split("You are the ", 1)[-1].split(" agent", 1)[0]
+                if code in replies and replies[code]:
+                    what = replies[code].pop(0)
+                    if what == "502":
+                        raise APIStatusError("Flower Endeavor providers failed",
+                                             response=httpx.Response(502, request=httpx.Request("POST", "http://x")), body=None)
+                    if what.startswith("cut"):
+                        return SimpleNamespace(output_text=what)
+                return super().create(**kw)
+
+        with unittest.mock.patch.object(agent_app.time, "sleep"):
+            events, _ = scan("Check the building.", {}, Flaky())
+        reports = {e["report"]["subsystem"]: e["report"] for e in of_type(events, "antibody.agent.report")}
+        self.assertFalse(reports["GEN"]["failed"])
+        self.assertFalse(reports["PWR"]["failed"])
 
     def test_a_fix_updates_the_report_without_another_model_call(self):
         model = FakeModel(risk={"HVAC": 0.5}, propose={"HVAC": {"tool": "hvac.reset_damper"}})
