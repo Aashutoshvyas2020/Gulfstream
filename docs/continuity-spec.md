@@ -12,6 +12,104 @@
 
 ---
 
+# Revision 1 (2026-09-29): three agents, with ground traffic at both ends
+
+> **This revision overrides the sections below wherever they conflict.** The body is left intact for reference.
+>
+> **Summary:** the Business Agent is removed and a Traffic Agent is added. The three agents are **Personal**, **Flight** and **Traffic**. Every agent runs as its own Flower agent and appears in the multi-agent flow.
+
+## R1. Agent lineup
+
+| Agent | Represents | Knows (private to it) | Where it runs on Flower |
+| :-- | :-- | :-- | :-- |
+| **Personal Agent** | The traveler; **the chat agent** | Preference profile, **calendar and meeting priorities** (absorbed from the former Business Agent), budget, risk tolerance, current location, memory | SuperLink AgentApp (the hub; the traveler chats with it) |
+| **Flight Agent** | The airline (spec's "Mobility Agent", flights only) | Reservation, flight status, disruptions, replacement options, fares, connections, departure and arrival times | SuperNode AgentApp |
+| **Traffic Agent** | Ground transport, like a multimodal maps route | Door-to-door times by **rideshare/car**, **public transit** and **rail** at a given departure time, both **to the departure airport** and **from the arrival airport** | SuperNode AgentApp |
+
+- The Personal Agent now owns "which meetings can move": internal call movable (medium), client dinner fixed (critical), networking event movable (low).
+- Moving the internal call is a mock calendar action included in the single approval.
+- No agent receives another agent's raw data. Flight and Traffic receive only constraints and queries.
+
+## R2. Why the Traffic Agent matters: it changes the answer
+
+The Flight Agent sees **airport arrival**. The traveler cares about **arriving at the dinner**.
+
+Ground time differs by airport, by time of day and by mode. So a flight that lands earlier can get the traveler to the dinner later. Only the Traffic Agent knows this. Only the Personal Agent knows where the traveler must be, and by when.
+
+**Traffic data** (deterministic mock, `data/traffic/routes.json`). The traveler is at Stanford at 07:00 PT.
+
+| Leg | Depart | Rideshare / car | Public transit | Rail |
+| :-- | :-- | :-- | :-- | :-- |
+| Stanford → SFO | 07:00 PT | **35 min** | 70 min (Caltrain + BART) | n/a |
+| Stanford → SJC | 07:00 PT | **25 min** | 55 min (Caltrain + bus) | n/a |
+| EWR → Midtown | 17:15 ET | 45 min (rush hour) | n/a | **35 min** (AirTrain + NJ rail) |
+| JFK → Midtown | 16:55 ET | 80 min (rush hour) | 65 min (AirTrain + subway) | 65 min (AirTrain + LIRR) |
+| JFK → Midtown | 17:45 ET | 90 min | 70 min | 70 min |
+| JFK → Midtown | 18:20 ET | 85 min | 70 min | 70 min |
+
+**Rules** (deterministic Python, not the LLM):
+- Deplaning to curb: 15 minutes.
+- Airport check-in and security before departure: 45 minutes.
+- "At the dinner" target: **17:50 ET** (18:00 minus 10 minutes of slack for low risk tolerance).
+
+## R3. Options re-evaluated with ground time at both ends
+
+Departure times are added so the origin end can be checked.
+
+| Option | Flight | Origin end (from Stanford 07:00) | Destination end | At dinner by | Result |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| **A** | SFO 08:40 → ORD → JFK 18:05, $0 | Rideshare at SFO 07:35; needs 07:55 ✓ | Already after 18:00 at the airport | ~19:30 | **REJECT**: misses the critical dinner |
+| **B** | SFO 08:50 → **EWR 17:00** nonstop, +$165 | Rideshare at SFO 07:35; needs 08:05 ✓ (transit 08:10 ✗) | Curb 17:15 + **rail 35** = **17:50** (rideshare would be 18:00) | **17:50** | **RECOMMEND**: rideshare to SFO, rail into Midtown |
+| **C** | SJC 08:10 → JFK 16:40 nonstop, +$95 | Rideshare at SJC 07:25; needs 07:25 ✓ (zero slack) | Curb 16:55 + best mode 65 = **18:00** | 18:00 | **REJECT**: no slack at either end; avoid-SJC preference |
+| **D** | SFO 08:30 → DEN → JFK 17:30, +$45 | Rideshare at SFO 07:35; needs 07:45 ✓ | Curb 17:45 + 70 = 18:55 | 18:55 | **REJECT**: 47-minute connection is under the 50-minute minimum; also late |
+
+**The demo moment:** Option C *lands 20 minutes earlier than B*, at the traveler's preferred airport. A flight-only system would rank it first. The Traffic Agent's rush-hour data at JFK rejects it, and its rail option from EWR is what makes B work. **No single agent could reach B.**
+
+## R4. Collaborative workflow (replaces §9 steps 3–6)
+
+1. `/disrupt UA212` (demo control). The Personal Agent asks the Flight Agent for trip status.
+2. **Flight → Personal:** cancelled, with options A–D, structured and deterministic.
+3. **Personal → Traffic:** the origin legs "Stanford → SFO, Stanford → SJC, departing 07:00 PT" and the destination legs "EWR → Midtown at 17:15; JFK → Midtown at 16:55, 17:45 and 18:20."
+   - It sends **locations and times only**. No dinner, no client, no calendar.
+4. **Traffic → Personal:** minutes per leg and mode, from its own data.
+5. **Personal (private):** applies the calendar (dinner is fixed; the internal call can move) and the preferences. It runs the deterministic checks in R3.
+6. **Personal → Flight:** minimal constraints plus a request to hold Option B.
+7. **Chat → traveler:** one consolidated proposal.
+   - Rebook B (+$165).
+   - Rideshare to SFO (mock).
+   - Rail into Midtown (mock).
+   - Move the internal call to tomorrow 19:00 ET.
+   - Prompt: *Approve? (reply "approve")*
+8. **Traveler replies "approve"**, which starts the next run and executes the mock state changes.
+
+## R5. Updated metrics and privacy line
+
+```text
+Critical commitments lost: 0
+Human approvals: 1
+Agents consulted: Flight, Traffic
+Private calendar events revealed to Flight or Traffic agents: 0
+```
+
+## R6. Updated P0 (replaces §28 items 2, 6, 7)
+
+- 2. Three agents exist: **Personal (hub/chat), Flight, Traffic**, each a separate Flower agent.
+- 6. The Personal Agent queries the Traffic Agent for **both ends** of each option.
+- 7. The Traffic Agent responds from its own data. Option C is rejected on destination ground time.
+
+**Also P0:**
+- the chat interface (Flower Chat);
+- a published Flower Hub app;
+- the GitHub repo.
+
+## R7. Out of scope (unchanged spirit)
+
+- Traffic is mock data shaped like a multimodal maps result.
+- No live Google Maps, rideshare or rail APIs, and no real bookings of rides or trains.
+- This is consistent with §26 and §30.
+
+---
+
 # 1. One-Sentence Product
 
 **Continuity is a federated recovery system where a mobility provider agent, a private personal agent, and a business agent collaborate to repair a disrupted trip around the traveler’s real-life constraints without any one party gaining access to all of the traveler’s private context.**

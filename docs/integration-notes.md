@@ -2,6 +2,19 @@
 
 > Integration notes for [continuity-spec.md](continuity-spec.md), 2026-09-29. They record decisions and open questions about Flower and Sentience Governor; they do not edit the spec. Flower facts: [flower-architecture.md](flower-architecture.md).
 
+## Update (2026-09-29): spec Revision 1
+
+- **Agents are now Personal, Flight and Traffic.** The Business Agent was removed; the Personal Agent holds meeting priorities. See spec §R1.
+- **Layout 1 is adopted.**
+  - The Personal Agent is the SuperLink AgentApp and the chat agent.
+  - Flight and Traffic are SuperNode AgentApps.
+  - Every arrow in spec §R4 is a direct grid message (hub → node → reply). Nothing is relayed.
+- **Where this file still says so:**
+  - "Business" in §1 now means **Traffic**, with Personal → Traffic ground-time queries.
+  - In §2's high-consequence list, `reschedule_event` stays (the internal call). Add `book_ground_transport` (mock).
+- **Arrival buffer flag (§3 item 4) is resolved.** The Traffic Agent now supplies ground time per airport, time and mode. The buffer rules are deterministic (spec §R2).
+- **Carrier-name flag is still open.** The spec still uses UA212.
+
 ## 0. Team direction (2026-09-29, overrides spec §24 TUI)
 
 - **The whole app is a chat interface.** No Rich or Textual TUI.
