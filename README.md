@@ -116,6 +116,7 @@ Every agent keeps its own [Sentience Governor](https://github.com/crescerelabs/s
 
 - **Where:** `agent/agent/governance.py`, wired into `run_specialist()` (each specialist) and `investigate()` (the coordinator's connector calls).
 - **Naming contract:** agent actions are `<area>.<verb>_<object>` (e.g. `h2o.shut_valve`); each specialist declares its own area as its scope. An action on another area's system is flagged as outside declared scope.
+- **Building domain adapter** (`agent/agent/building_domain.py`): one table gives every action its operation type (READ, WRITE, DELETE, EXECUTE) for the Governor record, and its tier (0–3) for the approval gate. Governor would otherwise guess from words in the tool name. `building_domain.tier(name) == 3` means a human must approve first. Add a row for every new action; an action not in the table is treated as a Tier 3 write.
 - **Flagged as high-consequence** (profiles in `governance/profiles/`):
   - Tier 3 actions: `trip_breaker`, `shut_valve`, `isolate_zone`, `dispatch_contractor`, `notify_tenants`;
   - `start_automation`;
