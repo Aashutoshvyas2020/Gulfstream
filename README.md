@@ -58,11 +58,37 @@ The agent emits `antibody.scan.started`, `antibody.agent.report`, `antibody.scan
 
 | Lane | Owner | Owns | Starts from |
 | :-- | :-- | :-- | :-- |
-| **1. Agents** | Roansh Desai | `agent/` | Tier 0–3 actions: add `<verb>_<object>` tools per agent (e.g. `reset_damper`, `shut_valve`), fixed thresholds in code (health < 70 escalates, 2 retries), an approval gate for Tier 3 actions and `start_automation` |
+| **1. Agents** | Roansh Desai | `agent/` | Tier 0–3 actions: add `<area>.<verb>_<object>` tools per agent (e.g. `hvac.reset_damper`, `h2o.shut_valve`), fixed thresholds in code (health < 70 escalates, 2 retries), an approval gate for Tier 3 actions and `start_automation` |
 | **2. Flower integration** | Aashutosh Vyas | `antibody-web/server.py`, SuperLink / SuperGrid setup | Get SuperGrid access working; confirm the heartbeat fix; real network immunity with 2–3 buildings as SuperNodes using `agent.grid` (`get_nodes`, `push_messages`, `pull_messages`): lessons travel, readings never do |
 | **3. Frontend** | Rikin Shah | `antibody-web/static/` | Tier 3 approval prompt, the "actions → auto-fixes → escalations → 1 human decision" funnel, a multi-building view for network immunity |
+| **Sentience Governor** | Roansh Desai (Claude supporting) | `agent/agent/governance.py`, `governance/` | One Governor session per agent (`antibody-<code>`, `antibody-coordinator`); route every new action through `AgentRecord.call`; keep the naming contract below |
 
 If you change the shape of a run event, change it in all three lanes in the same pull request.
+
+## Governance (Sentience Governor)
+
+Every agent keeps its own [Sentience Governor](https://github.com/crescerelabs/sentience-governor) record: what it declared it would do (objective and scope), each action it took, and flags where the two diverge. Governor records and flags; it never blocks. The approval gate for Tier 3 actions is Antibody's own code.
+
+- **Where:** `agent/agent/governance.py`, wired into `run_specialist()` (each specialist) and `investigate()` (the coordinator's connector calls).
+- **Naming contract:** agent actions are `<area>.<verb>_<object>` (e.g. `h2o.shut_valve`); each specialist declares its own area as its scope. An action on another area's system is flagged as outside declared scope.
+- **Flagged as high-consequence** (profiles in `governance/profiles/`):
+  - Tier 3 actions: `trip_breaker`, `shut_valve`, `isolate_zone`, `dispatch_contractor`, `notify_tenants`;
+  - `start_automation`;
+  - every CYBER change: `close_port`, `reset_password`, and others.
+
+**Setup** (once, on the machine running the SuperLink; needs Sentience Governor 0.3.2.1+, installed with the agent's dependencies):
+
+```bash
+mkdir -p ~/.sentience && cp -R governance/profiles ~/.sentience/ && cp governance/resolution.yaml ~/.sentience/
+```
+
+**Governor console** (second terminal): records land in `~/.sentience/traces/antibody/`, one file per agent per scan.
+
+```bash
+sentience open ~/.sentience/traces/antibody/<file>.jsonl --summary
+```
+
+Set `ANTIBODY_GOVERNOR=0` to turn recording off. If Governor is missing or fails, scans run unrecorded; nothing stops.
 
 ## Status
 

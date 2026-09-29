@@ -69,29 +69,30 @@ All three validate: `sentience profile validate governance/profiles/<file>`.
 - A profile cannot say "HVAC may only touch HVAC."
 - Instead, at session start each agent **declares its intent and scope**:
   - intent: e.g. "watch rooftop chiller; Tier 0/1 fixes only";
-  - scope: its own target system, e.g. `harbor-point/hvac`.
+  - scope: its own area, e.g. `hvac`.
 - Governor compares each action's target system with the declared scope.
 - An agent acting on another system is recorded as outside its declared scope.
 
-**Tool naming contract** (so the profile regexes match):
-- tool id is `<verb>_<object>`, e.g. `reset_damper`, `shut_valve`;
-- target system is `harbor-point/<area>`, e.g. `harbor-point/h2o`.
-- The regexes match `<tool_id>:<target_system>`.
+**Tool naming contract** (so scope checks and profile regexes match; implemented in `agent/agent/governance.py`):
+- actions are named `<area>.<verb>_<object>`, e.g. `hvac.reset_damper`, `h2o.shut_valve`;
+- Governor reads the part before the first dot as the target system (`h2o`);
+- each specialist declares its own area as its scope (`["h2o"]`);
+- profile regexes match `<tool_id>:<target_system>`, e.g. `h2o.shut_valve:h2o`.
 
-| Agent | Declared scope (target) | Tier 0/1 tools (in scope) |
+| Agent | Declared scope (target) | Tier 0/1 tools (in scope; prefix each with the area, e.g. `hvac.reset_damper`) |
 | :-- | :-- | :-- |
-| PWR | `harbor-point/pwr` | `clear_alert`, `rebaseline_sensor`, `adjust_ventilation` (battery room, within limits) |
-| ELEC | `harbor-point/elec` | `clear_alert`, `rebaseline_sensor`, `request_thermal_rescan` |
-| WIRE | `harbor-point/wire` | `clear_alert`, `rebaseline_sensor`, `request_arc_rescan` |
-| FIRE | `harbor-point/fire` | `clear_alert`, `rebaseline_sensor`, `recheck_riser_pressure` |
-| STR | `harbor-point/str` | `clear_alert`, `rebaseline_sensor`, `request_crack_remeasure` |
-| LIFT | `harbor-point/lift` | `clear_alert`, `retry_levelling` |
-| HVAC | `harbor-point/hvac` | `clear_alert`, `reset_damper`, `adjust_setpoint` (within limits) |
-| H2O | `harbor-point/h2o` | `clear_alert`, `enable_night_flow_isolation_mode`, `rebaseline_sensor` |
-| ENV | `harbor-point/env` | `clear_alert`, `request_facade_rescan` |
-| AIR | `harbor-point/air` | `clear_alert`, `adjust_ventilation` (within limits) |
-| CYBER | `harbor-point/bms` (read-only audit) | `clear_alert`, `run_audit` (no changes) |
-| Coordinator | `harbor-point/*` (read), work orders | `close_duplicate_work_order`, `rank`, `escalate` |
+| PWR | `pwr` | `clear_alert`, `rebaseline_sensor`, `adjust_ventilation` (battery room, within limits) |
+| ELEC | `elec` | `clear_alert`, `rebaseline_sensor`, `request_thermal_rescan` |
+| WIRE | `wire` | `clear_alert`, `rebaseline_sensor`, `request_arc_rescan` |
+| FIRE | `fire` | `clear_alert`, `rebaseline_sensor`, `recheck_riser_pressure` |
+| STR | `str` | `clear_alert`, `rebaseline_sensor`, `request_crack_remeasure` |
+| LIFT | `lift` | `clear_alert`, `retry_levelling` |
+| HVAC | `hvac` | `clear_alert`, `reset_damper`, `adjust_setpoint` (within limits) |
+| H2O | `h2o` | `clear_alert`, `enable_night_flow_isolation_mode`, `rebaseline_sensor` |
+| ENV | `env` | `clear_alert`, `request_facade_rescan` |
+| AIR | `air` | `clear_alert`, `adjust_ventilation` (within limits) |
+| CYBER | `cyber` (read-only audit) | `clear_alert`, `run_audit` (no changes) |
+| Coordinator | connector tools (`web_search`, `web_fetch`, `slack`, `notion`, `start_automation`), work orders | `close_duplicate_work_order`, `rank`, `escalate` |
 
 ### What Governor adds to the demo
 

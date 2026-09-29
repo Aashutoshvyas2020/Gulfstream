@@ -59,6 +59,6 @@ $env:ANTIBODY_SUPERLINK = "supergrid"
 ..\agent\.venv\Scripts\python server.py
 ```
 
-On SuperGrid the model is Flower's (`openai/gpt-5.6-sol`), connectors work, and Slack /
+On SuperGrid the model is Flower's Endeavor (`flower-endeavor-v1.0`), connectors work, and Slack /
 Notion can be bound per scan after connecting them in Settings > Connectors (personal
 workspace only in Flower 1.39).

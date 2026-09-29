@@ -12,9 +12,9 @@ task_boundary:
 
 high_consequence:
   tools:
-    - "^dispatch_contractor:"
-    - "^notify_tenants:"
-    - "^start_automation:"
-    - "^share_lesson:"
-    - "^execute_approved_action:"
+    - "(^|\\.)dispatch_contractor:"
+    - "(^|\\.)notify_tenants:"
+    - "(^|\\.)start_automation:"
+    - "(^|\\.)share_lesson:"
+    - "(^|\\.)execute_approved_action:"
   on_match: flag
