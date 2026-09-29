@@ -1,4 +1,14 @@
 .venv/
 *.fab
 __pycache__/
-!README.md
+# Local caches, logs and secrets: never published to Flower Hub (flwr app publish
+# filters with this file)
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+*.jsonl
+.env
+.env.*
+# Only the app README (the Hub listing), never a README inside a cache
+!/README.md
