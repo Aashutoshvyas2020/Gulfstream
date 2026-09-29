@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -129,6 +130,19 @@ class TierRulesTest(unittest.TestCase):
         self.assertEqual(r["night_flow_lpm_building_empty"], 14)  # nothing changed
         self.assertEqual(record.calls, [("h2o.shut_valve", None)])  # the attempt is on record
 
+    def test_tier3_that_is_not_urgent_is_advice(self):
+        record = FakeRecord()
+        result = actions.act(record, "ELEC", {"tool": "elec.dispatch_contractor"}, readings("ELEC"), urgent=False)
+        self.assertEqual([o["status"] for o in result.outcomes], ["advised"])
+        self.assertEqual(result.held, [])
+        self.assertEqual(record.calls, [])  # nothing attempted, nothing for Governor to flag
+
+    def test_urgency(self):
+        self.assertTrue(actions.is_urgent(0.85, None))
+        self.assertTrue(actions.is_urgent(0.3, 0.5))
+        self.assertFalse(actions.is_urgent(0.7, 3))
+        self.assertFalse(actions.is_urgent("n/a", None))
+
     def test_another_areas_tool_is_refused_and_escalated(self):
         record = FakeRecord()
         result = actions.act(record, "HVAC", {"tool": "h2o.shut_valve"}, readings("HVAC"))
@@ -227,12 +241,17 @@ def of_type(events, kind):
 
 
 class ScanTest(unittest.TestCase):
+    """Full scans with the investigation and the model-written alert switched on."""
+
     def setUp(self):
         self._enabled = governance.ENABLED
         governance.ENABLED = False  # Governor has its own test below
+        self._flags = agent_app.INVESTIGATE, agent_app.MODEL_ALERT
+        agent_app.INVESTIGATE = agent_app.MODEL_ALERT = True
 
     def tearDown(self):
         governance.ENABLED = self._enabled
+        agent_app.INVESTIGATE, agent_app.MODEL_ALERT = self._flags
 
     def test_leak_is_held_then_approved_in_the_next_message(self):
         state: dict = {}
@@ -270,13 +289,32 @@ class ScanTest(unittest.TestCase):
 
     def test_rejected_action_is_dropped(self):
         state: dict = {}
-        model = FakeModel(propose={"CYBER": {"tool": "cyber.close_port", "args": {"port": 47808}}})
+        model = FakeModel(risk={"CYBER": 0.9}, propose={"CYBER": {"tool": "cyber.close_port", "args": {"port": 47808}}})
         events, _ = scan("Check the building.", state, model)
         approval_id = of_type(events, "antibody.scan.funnel")[0]["pending"][0]["id"]
         events, _ = scan(f"reject {approval_id}", state, model)
         statuses = [e["status"] for e in of_type(events, "antibody.action") if e["agent"] == "CYBER"]
         self.assertEqual(statuses, ["rejected", "skipped"])
         self.assertEqual(of_type(events, "antibody.scan.funnel")[0]["pending"], [])
+
+    def test_at_most_three_approvals_per_scan_highest_priority_first(self):
+        risky = {c: 0.9 for c in ("PWR", "ELEC", "H2O", "STR", "CYBER")}
+        propose = {c: {"tool": f"{c.lower()}.dispatch_contractor"} for c in ("PWR", "ELEC", "H2O", "STR")}
+        propose["CYBER"] = {"tool": "cyber.close_port", "args": {"port": 47808}}
+        events, _ = scan("Check the building.", {}, FakeModel(risk=risky, propose=propose))
+        pending = of_type(events, "antibody.scan.funnel")[0]["pending"]
+        self.assertEqual(len(pending), actions.MAX_HELD_PER_SCAN)
+        ranked = [r["subsystem"] for r in of_type(events, "antibody.scan.ranked")[0]["ranked"]]
+        self.assertEqual([p["agent"] for p in pending], [c for c in ranked if c in propose][:3])
+        advised = [e for e in of_type(events, "antibody.action") if e["status"] == "advised"]
+        self.assertEqual(len(advised), 2)
+
+    def test_coordinator_gets_only_the_tools_the_message_asks_for(self):
+        self.assertEqual(agent_app.connector_refs("Check the building."), ("web_search", "web_fetch"))
+        self.assertIn("start_automation", agent_app.connector_refs("Watch it 24/7"))
+        self.assertIn("start_automation", agent_app.connector_refs("then keep watching it"))
+        self.assertIn("slack", agent_app.connector_refs("Any tenant complaints?"))
+        self.assertNotIn("start_automation", agent_app.connector_refs("approve A1"))
 
     def test_failed_agent_lowers_health(self):
         healthy, _ = scan("Check the building.", {}, FakeModel())
@@ -311,13 +349,29 @@ class ScanTest(unittest.TestCase):
         model = SlowAlert(risk={"H2O": 0.9}, propose={"H2O": {"tool": "h2o.shut_valve", "reason": "riser leak"}})
         events, _ = scan("Check the building.", state, model)
         text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
-        self.assertTrue(text.startswith("partial "))
+        self.assertTrue(text.startswith("**Building health:"))  # code writes the head at once
+        self.assertIn("partial ", text)
         self.assertIn("**Building health:", text)
         self.assertEqual(text.count("| H2O Pipe leak |"), 1)
         self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("| ") and line[2].isdigit()), 14)
         self.assertIn("**Needs your approval**", text)
         self.assertIn("h2o.shut_valve", text)
         self.assertIn("approve", state[agent_app.STATE_KEY]["last_alert"])  # remembered for follow-ups
+
+    def test_every_scan_ends_with_exactly_one_completed_event_and_no_error(self):
+        class SlowAlert(FakeModel):
+            def create(self, **kw):
+                if kw.get("stream"):
+                    return iter([SimpleNamespace(type="response.output_text.delta", delta="partial "),
+                                 SimpleNamespace(type="error", to_dict=lambda: {"type": "error"})])
+                return super().create(**kw)
+
+        for model in (FakeModel(), SlowAlert()):
+            events, _ = scan("Check the building.", {}, model)
+            kinds = [e["type"] for e in events]
+            self.assertEqual(kinds.count("response.completed"), 1)
+            self.assertEqual(kinds[-1], "response.completed")  # after the approvals text
+            self.assertNotIn("error", kinds)
 
     def test_alert_falls_back_when_the_call_itself_fails(self):
         class DownAlert(FakeModel):
@@ -330,6 +384,23 @@ class ScanTest(unittest.TestCase):
         text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
         self.assertIn("ConnectionError", text)
         self.assertIn("**Building health:", text)
+
+    def test_alert_call_has_its_own_time_limit(self):
+        model = FakeModel()
+        scan("Check the building.", {}, model)
+        self.assertEqual(model.inputs[-1]["timeout"], agent_app.ALERT_TIMEOUT)
+
+    def test_keep_alive_sends_progress_while_a_scan_is_quiet(self):
+        events: list[dict] = []
+        agent = SimpleNamespace(events=SimpleNamespace(emit=events.append))
+        saved, agent_app.KEEPALIVE_SECONDS = agent_app.KEEPALIVE_SECONDS, 0.05
+        try:
+            with agent_app.KeepAlive(agent):
+                import time
+                time.sleep(0.3)
+        finally:
+            agent_app.KEEPALIVE_SECONDS = saved
+        self.assertGreaterEqual(len(of_type(events, "antibody.progress")), 3)
 
     def test_investigation_can_be_switched_off(self):
         model = FakeModel(automation=True)
@@ -345,6 +416,124 @@ class ScanTest(unittest.TestCase):
         events, _ = scan("Check the building.", {}, FakeModel(risk={c: 0.6 for c in SPECIALISTS}))
         escalations = [e for e in of_type(events, "antibody.action") if e["action"] == actions.ESCALATE_ID]
         self.assertTrue(any("below 70" in e["detail"] for e in escalations))
+
+
+class SpeedTest(unittest.TestCase):
+    def setUp(self):
+        self._enabled = governance.ENABLED
+        governance.ENABLED = False
+        self._saved = {name: getattr(agent_app, name) for name, _ in agent_app.SETTINGS.values()}
+        agent_app.INVESTIGATE = agent_app.MODEL_ALERT = True
+
+    def tearDown(self):
+        governance.ENABLED = self._enabled
+        for name, value in self._saved.items():
+            setattr(agent_app, name, value)
+        agent_app._UNSUPPORTED.clear()
+
+    def test_settings_come_from_run_config_and_env_overrides_them(self):
+        context = SimpleNamespace(run_config={"parallel-agents": 9, "top-alerts": 1, "investigate": False})
+        env = {"ANTIBODY_TOP_ALERTS": "3"}
+        with unittest.mock.patch.dict(os.environ, env):
+            os.environ.pop("ANTIBODY_MODEL", None)
+            applied = agent_app.configure(context)
+        self.assertEqual(applied["parallel-agents"], 9)
+        self.assertEqual(applied["top-alerts"], 3)  # env wins
+        self.assertIs(applied["investigate"], False)
+
+    def test_pyproject_run_config_matches_the_settings(self):
+        import tomllib
+        config = tomllib.loads((REPO / "agent" / "pyproject.toml").read_text())["tool"]["flwr"]["app"]["config"]
+        self.assertEqual(set(config), set(agent_app.SETTINGS))
+        self.assertEqual(config["parallel-agents"], 14)
+        self.assertIs(config["investigate"], False)
+        self.assertIs(config["model-alert"], False)
+
+    def test_default_scan_makes_only_specialist_model_calls(self):
+        agent_app.INVESTIGATE = agent_app.MODEL_ALERT = False
+        model = FakeModel(risk={"H2O": 0.9, "PWR": 0.8})
+        seen = []
+        original = model.create
+        model.create = lambda **kw: (seen.append(kw), original(**kw))[1]
+        events, _ = scan("Check the building.", {}, model)
+        self.assertEqual(len(seen), 14)  # one per specialist, nothing else
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertIn("**Top 2 alerts**", text)
+        self.assertNotIn("did not finish", text)
+        self.assertEqual([e["type"] for e in events].count("response.completed"), 1)
+
+    def test_rejected_speed_option_is_dropped_and_retried(self):
+        from openai import BadRequestError
+        import httpx
+        calls = []
+
+        def create(**kw):
+            calls.append(kw)
+            if "reasoning" in kw:
+                raise BadRequestError("Unsupported parameter: reasoning", response=httpx.Response(400, request=httpx.Request("POST", "http://x")), body=None)
+            return "ok"
+
+        client = SimpleNamespace(responses=SimpleNamespace(create=create))
+        self.assertEqual(agent_app.create_response(client, 500, model="m"), "ok")
+        self.assertIn("reasoning", calls[0])
+        self.assertNotIn("reasoning", calls[1])
+        self.assertEqual(calls[1]["max_output_tokens"], 500)
+
+    def test_specialists_ask_for_short_answers(self):
+        model = FakeModel()
+        seen = []
+        original = model.create
+        model.create = lambda **kw: (seen.append(kw), original(**kw))[1]
+        scan("Check the building.", {}, model)
+        specialist = [kw for kw in seen if "tools" not in kw and not kw.get("stream")]
+        self.assertTrue(specialist)
+        self.assertEqual(specialist[0]["max_output_tokens"], agent_app.SPECIALIST_MAX_OUTPUT_TOKENS)
+        self.assertEqual(specialist[0]["reasoning"], {"effort": "low"})
+
+    def test_cut_off_or_failed_specialist_is_retried_once(self):
+        from openai import APIStatusError
+        import httpx
+        replies = {"GEN": ["cut off {", "ok"], "PWR": ["502", "ok"]}
+
+        class Flaky(FakeModel):
+            def create(self, **kw):
+                code = kw.get("instructions", "").split("You are the ", 1)[-1].split(" agent", 1)[0]
+                if code in replies and replies[code]:
+                    what = replies[code].pop(0)
+                    if what == "502":
+                        raise APIStatusError("Flower Endeavor providers failed",
+                                             response=httpx.Response(502, request=httpx.Request("POST", "http://x")), body=None)
+                    if what.startswith("cut"):
+                        return SimpleNamespace(output_text=what)
+                return super().create(**kw)
+
+        with unittest.mock.patch.object(agent_app.time, "sleep"):
+            events, _ = scan("Check the building.", {}, Flaky())
+        reports = {e["report"]["subsystem"]: e["report"] for e in of_type(events, "antibody.agent.report")}
+        self.assertFalse(reports["GEN"]["failed"])
+        self.assertFalse(reports["PWR"]["failed"])
+
+    def test_a_fix_updates_the_report_without_another_model_call(self):
+        model = FakeModel(risk={"HVAC": 0.5}, propose={"HVAC": {"tool": "hvac.reset_damper"}})
+        seen = []
+        original = model.create
+        model.create = lambda **kw: (seen.append(kw), original(**kw))[1]
+        events, _ = scan("Check the building.", {}, model)
+        hvac_calls = [kw for kw in seen if "You are the HVAC agent" in kw.get("instructions", "")]
+        self.assertEqual(len(hvac_calls), 1)
+        report = next(e["report"] for e in of_type(events, "antibody.agent.report") if e["report"]["subsystem"] == "HVAC")
+        self.assertLessEqual(report["risk_score"], 0.1)
+        self.assertIn("Fixed by hvac.reset_damper", report["finding"])
+
+    def test_alert_model_gets_only_the_top_reports(self):
+        model = FakeModel(risk={"H2O": 0.9, "PWR": 0.8, "ELEC": 0.7})
+        events, _ = scan("Check the building.", {}, model)
+        payload = model.inputs[-1]["input"][-1]["content"]
+        data = json.loads(payload.split("\n", 1)[1])
+        ranked = [r["subsystem"] for r in of_type(events, "antibody.scan.ranked")[0]["ranked"]]
+        self.assertEqual([r["subsystem"] for r in data["top_reports"]], ranked[:agent_app.TOP_ALERTS])
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("| ") and line[2].isdigit()), 14)
 
 
 GOVERNOR_SCRIPT = """

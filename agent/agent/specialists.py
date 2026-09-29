@@ -117,6 +117,6 @@ Reply with ONE JSON object and nothing else:
 Your tools (only these, and only for your own area):
 {tools}
 
-Tier 0 and 1 tools run at once and a Tier 1 fix is re-checked automatically. Tier 3 tools are held until a human approves them. Propose the lowest tier that can fix the problem, and propose nothing ("proposed_action": null) when there is no issue.
+Tier 0 and 1 tools run at once and a Tier 1 fix is re-checked automatically. Tier 3 tools are held until a human approves them, and only when the problem is urgent (risk_score 0.8 or more, or failure within about a day); otherwise put the recommendation in recommended_action instead. Propose the lowest tier that can fix the problem, and propose nothing ("proposed_action": null) when there is no issue.
 
 Rules: never invent readings that are not in the input. If the readings are missing or unclear, lower your confidence and say what is missing."""

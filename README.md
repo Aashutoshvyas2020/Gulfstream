@@ -106,7 +106,7 @@ Each specialist may propose one action from its own tools. The tier decides what
 | 0 Cleanup | Runs once; a re-read (rescan, remeasure) that still shows the problem escalates | `done`, or `recheck_failed` then `escalated` |
 | 1 Self-correction | Runs, re-checks its own fix; after 2 failed re-checks it escalates | `fixed`, `recheck_failed`, then `escalated` |
 | 2 Escalate | Also fired when building health is below 70, or an agent asks for another area's tool | `escalated`, `refused` |
-| 3 Human approval | Held with an id (`A1`, `A2`, …); `start_automation` is held the same way | `held`, then `executed` or `rejected` in a later message |
+| 3 Human approval | Held with an id (`A1`, `A2`, …) only when urgent (risk ≥ 0.8 or failure within a day), at most 3 per scan by priority; otherwise kept as advice. `start_automation` is held the same way | `held`, then `executed` or `rejected` in a later message; `advised` when not held |
 
 A Flower run is one chat message, so a held action is decided in the next message of the run series: `approve A1`, `reject A2`, `approve all`, or JSON `{"approve": ["A1"], "by": "Dana"}`. Held actions and the simulated effects of past actions are kept in run-series state.
 
@@ -170,12 +170,20 @@ Set `ANTIBODY_GOVERNOR=0` to turn recording off. If Governor is missing or fails
 
 On the local SuperLink with Ollama, some scans are killed 1–4 minutes in. On SuperGrid with Endeavor it happened too (run `10096390843320514865`, 2026-09-29): all 14 specialists reported, then the run was killed about 7 minutes in during the coordinator's investigation, with no error in the log.
 
+Speed and settings (target: a hosted scan under about 4 minutes):
+- Scan settings live in Flower run config, `[tool.flwr.app.config]` in `agent/pyproject.toml`, read from `context.run_config`, so they reach SuperGrid runs. `ANTIBODY_<NAME>` environment variables (e.g. `ANTIBODY_TOP_ALERTS=3`) override them on a local SuperLink. The run log starts with the settings in effect.
+- All 14 specialists run at once (`parallel-agents`; one at a time on Ollama). Each asks for low reasoning effort and at most `specialist-max-output-tokens`; an option the model service rejects is dropped and the call retried.
+- A Tier 1 fix that passes its re-check updates the report in code instead of a second model call (`reassess-after-fix`).
+- The coordinator: at most 2 tool turns, top 2 alerts. On SuperGrid Endeavor has not finished the investigation (30 s) or the alert (60 s) inside their limits in any hosted run, so both are off by default: `investigate = false` and `model-alert = false`. Code then writes the top alerts from the specialists' own (model-written) findings, evidence and fixes. Set either to `true` in run config to show the connectors or a model-written alert.
+- The alert: code writes the health, the ranked table, what the agents did and the approvals at once; the model only writes the top alerts, from the top reports and trimmed investigation results. Exactly one `response.completed` ends every scan, and model error events are never relayed, so `flwr chat` and the console never report a failure when the fallback is used.
+
 Mitigations in `agent/agent/agent_app.py` (not verified on SuperGrid yet):
 - Every step writes a timestamped line to the run log (`[HH:MM:SS] investigate: turn 1 model call`), so `flwr log <run-id> supergrid --show` shows where a killed run stopped.
-- The investigation is best effort: each of its model calls times out after `ANTIBODY_INVESTIGATE_TIMEOUT` seconds (default 50), and a slow or failed call ends it; the alert still goes out and says what could not be checked.
+- The investigation is best effort: each of its model calls times out after `investigate-timeout` seconds (default 30), and a slow or failed call ends it; the alert still goes out and says what could not be checked.
 - The coordinator's requests are compact JSON without the fields it does not use.
+- The alert call gets `alert-timeout` seconds (default 60) before the plain-code alert takes over, instead of Flower's 5-minute model timeout. An `antibody.progress` event every 15 s keeps `flwr chat` and the console connection from being dropped while Endeavor is slow.
+- The coordinator is given `web_search` / `web_fetch` only; Slack / Notion when the message mentions them (tenants, complaints, work orders), and `start_automation` when it asks for monitoring. Fewer tools make each call faster.
 - If the alert's model call fails too (SuperGrid run `7689180499312021667`: `model_response_timeout` from Flower's model service), plain code writes the alert from the scan: health, the ranked table, what the agents did and what needs approval. Every scan ends with an answer.
-- `ANTIBODY_INVESTIGATE=0` skips the investigation (demo-safe mode).
-- These settings are read where the app runs: set them on a local SuperLink's shell. On SuperGrid the defaults apply.
+- `investigate = false` in run config (or `ANTIBODY_INVESTIGATE=0` locally) skips the investigation (demo-safe mode).
 
 Earlier fixes: alert text is sent in 0.5 s batches (it was about 1,300 events per alert), and follow-ups use run-series state instead of `get_trace()`. The latest fix is **not verified yet**: specialists run one at a time when `ANTIBODY_MODEL` is set, because a local Ollama is serial and parallel calls only queue inside the SuperLink. Run 3–5 scans in a row to confirm. Override with `ANTIBODY_PARALLEL`.

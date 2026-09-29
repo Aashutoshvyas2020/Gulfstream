@@ -487,11 +487,12 @@ function refreshKpis(){
 const agentTotal = () => META ? Object.keys(META.specialists).length : 0;
 
 // Tier 0-3 actions (antibody.action) and the approvals funnel (antibody.scan.funnel)
-const ACTION_CLS = {done:"t-ok", fixed:"t-ok", executed:"t-ok", recheck_failed:"t-w", escalated:"t-w",
+const ACTION_CLS = {advised:"t-s", done:"t-ok", fixed:"t-ok", executed:"t-ok", recheck_failed:"t-w", escalated:"t-w",
   refused:"t-inf", held:"t-w", rejected:"t-s", skipped:"t-s", failed:"t-inf"};
 const ACTION_TEXT = {done:"done", fixed:"fixed and re-checked", executed:"carried out (approved)",
   recheck_failed:"re-check failed", escalated:"escalated to a human", refused:"refused (not its tool)",
-  held:"held for your approval", rejected:"rejected", skipped:"skipped (rejected)", failed:"failed"};
+  held:"held for your approval", rejected:"rejected", skipped:"skipped (rejected)", failed:"failed",
+  advised:"recommended (not urgent enough for an approval)"};
 function onAction(m){
   const attempt = m.attempt ? ` (attempt ${m.attempt})` : "";
   const id = m.approval_id ? ` · ${m.approval_id}` : "";
@@ -580,7 +581,11 @@ async function startScan(prompt, newSeries){
   let res;
   try{
     const connectors = selectedAccounts();
-    if (connectors.length) feed(`Binding account connectors: ${connectors.join(", ")}`, "t-s");
+    if (connectors.length){
+      feed(`Binding account connectors: ${connectors.join(", ")}`, "t-s");
+      // The coordinator only uses Slack / Notion when the message asks for them
+      prompt += " Also check Slack and Notion for tenant complaints and open work orders.";
+    }
     res = await fetch("/api/scan", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({prompt, overrides, connectors, new_series: newSeries})});
   }catch(e){ return fail("Backend unreachable: " + e); }
   const data = await res.json().catch(() => ({}));
