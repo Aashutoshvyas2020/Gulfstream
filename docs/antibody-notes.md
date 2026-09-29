@@ -18,6 +18,16 @@
 
 The agents: PWR, ELEC, WIRE, FIRE, STR, LIFT, HVAC, H2O, ENV, AIR, CYBER.
 
+## 1a. Pipeline on Flower (team mapping)
+
+| Step | Built with | What happens | Governor's record |
+| :-- | :-- | :-- | :-- |
+| **Sense** | **Flower AgentApp** | The 11 agents check their systems in parallel, each on its own sensor data | Reads within each agent's declared scope; Tier 0/1 fixes |
+| **Rank** | **Deterministic costing** (plain Python, no LLM) | Each problem is scored by risk × consequence × urgency and costed; the building health score is computed out of 100 | Not a tool call. If health falls below 70, the escalation (Tier 2) is recorded |
+| **Investigate** | **Automation** | The top problems are investigated automatically via connectors: `web_search` / `web_fetch` for the safety rule, read-only Slack for tenant complaints, read-only Notion for existing work orders | Each connector call is recorded. Connector content is untrusted data |
+| **Alert** | *(to confirm)* | What is wrong, the evidence, who to call, the fix and the deadline | Tier 3 actions it proposes are flagged, and the record shows the human approval |
+| **Remember** | **SuperLink** | The health trend and past alerts persist in `context.state` across the run series on the SuperLink. `start_automation` schedules scans every 10 minutes | `start_automation` is Tier 3: the record shows who turned on 24/7 scanning |
+
 ## 2. Human supervision: tiered autonomy (team decision)
 
 People are brought in by **building-health escalation**. Small problems are fixed by the bots in self-correcting loops, and cleanups need no human at all.
