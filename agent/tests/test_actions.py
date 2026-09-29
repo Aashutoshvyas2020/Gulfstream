@@ -362,6 +362,22 @@ print(json.dumps([json.loads(line) for line in path.read_text().splitlines()]))
 """
 
 
+APPROVAL_SCRIPT = """
+import json
+from agent import actions
+from agent.building_data import SNAPSHOT
+from agent.governance import AgentRecord, TRACE_DIR, approved_record
+record = AgentRecord("antibody-h2o", objective="t", scope=["h2o"], run_tag="t")
+held = actions.act(record, "H2O", {"tool": "h2o.shut_valve"}, dict(SNAPSHOT["H2O"])).held
+record.close()
+item = {**held[0], "id": "A1", "approved_by": "Dana"}
+approval = approved_record("antibody-h2o", ["h2o"], item, "t")
+actions.execute_approved(approval, "H2O", item, dict(SNAPSHOT["H2O"]))
+approval.close()
+print(json.dumps({p.name: [json.loads(l) for l in p.read_text().splitlines()] for p in TRACE_DIR.glob("*.jsonl")}))
+"""
+
+
 class GovernorTest(unittest.TestCase):
     """Real Governor sessions with the repo's profiles, in a temporary home.
 
@@ -386,6 +402,30 @@ class GovernorTest(unittest.TestCase):
         self.assertIn("HIGH_CONSEQUENCE_DETECTED", shut["advisory_flags"])
         self.assertIn("TASK_BOUNDARY_CROSSED", shut["advisory_flags"])  # read-only scan turned into a fix
         self.assertIn("SCOPE_INTENT_MISMATCH", trip["advisory_flags"])
+
+    def test_approved_execution_carries_its_approval_and_the_proposal_does_not(self):
+        if not governance.ENABLED:
+            self.skipTest("Sentience Governor not installed")
+        with tempfile.TemporaryDirectory() as home:
+            shutil.copytree(REPO / "governance" / "profiles", Path(home, ".sentience", "profiles"))
+            shutil.copy(REPO / "governance" / "resolution.yaml", Path(home, ".sentience"))
+            env = {**os.environ, "HOME": home, "ANTIBODY_TRACE_DIR": str(Path(home, "traces"))}
+            out = subprocess.run(
+                [sys.executable, "-c", APPROVAL_SCRIPT], env=env, cwd=REPO / "agent",
+                capture_output=True, text=True, check=True,
+            ).stdout
+        files = json.loads(out.strip().splitlines()[-1])
+
+        def claim(name):
+            (intent,) = [e for e in files[name] if e["event_type"] == "INTENT_DECLARED"]
+            return intent["payload"]["authorization_claim"]
+
+        def tools(name):
+            return [e["payload"]["tool_id"] for e in files[name] if e["event_type"] == "SCOPE_ASSERTED"]
+
+        self.assertIsNone(claim("t-antibody-h2o.jsonl"))  # held proposal: no approval
+        self.assertEqual(claim("t-antibody-h2o-approved-A1.jsonl"), "approved by Dana (A1)")
+        self.assertEqual(tools("t-antibody-h2o-approved-A1.jsonl"), ["h2o.shut_valve"])
 
 
 if __name__ == "__main__":

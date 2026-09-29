@@ -31,7 +31,7 @@ from openai import OpenAI
 
 from . import actions, building_domain
 from .building_data import BUILDING, SNAPSHOT
-from .governance import AgentRecord
+from .governance import AgentRecord, approved_record
 from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
 
 # Flower's own Endeavor model via the Flower Runtime; set ANTIBODY_MODEL to run on a local model, e.g. gemma4:latest
@@ -201,7 +201,12 @@ def run_specialist(
     try:
         # Approved Tier 3 actions run before the assessment, so the report shows their effect
         for item in approved:
-            step = actions.execute_approved(record, code, item, readings)
+            # Its own Governor session, carrying the approval (id and approver)
+            approval = approved_record(f"antibody-{area}", [area], item, run_tag)
+            try:
+                step = actions.execute_approved(approval, code, item, readings)
+            finally:
+                approval.close()
             done.outcomes += step.outcomes
             done.changes.update(step.changes)
 
@@ -482,7 +487,7 @@ def investigate(
 
 
 def run_approved_connector(
-    agent: AgentSession, record: AgentRecord, item: dict[str, Any]
+    agent: AgentSession, item: dict[str, Any], run_tag: str
 ) -> dict[str, Any]:
     """Make a connector call the manager approved; an automation starts shortly after approval."""
     name = item["action"]
@@ -495,6 +500,10 @@ def run_approved_connector(
         ),
     }
     base = dict(approval_id=item["id"], approved_by=item.get("approved_by", ""))
+    # Its own Governor session, carrying the approval (id and approver)
+    record = approved_record(
+        "antibody-coordinator", [*CONNECTOR_REFS, actions.COORDINATOR_AREA], item, run_tag
+    )
     try:
         result = record.call(name, lambda: agent.connectors.call(call))
         if is_error_output(result):
@@ -503,6 +512,8 @@ def run_approved_connector(
     except Exception as exc:
         return actions.outcome("COORDINATOR", name, actions.APPROVAL, "failed",
                                detail=str(exc)[:200], **base)
+    finally:
+        record.close()
     return actions.outcome("COORDINATOR", name, actions.APPROVAL, "executed",
                            detail=call["arguments"], **base)
 
@@ -642,7 +653,7 @@ def main(agent: AgentSession, context: Context) -> None:
         approved_by_agent: dict[str, list[dict[str, Any]]] = {}
         for item in approved:
             if item["agent"] == "COORDINATOR":
-                emit_outcome(run_approved_connector(agent, coordinator, item))
+                emit_outcome(run_approved_connector(agent, item, run_tag))
             else:
                 approved_by_agent.setdefault(item["agent"], []).append(item)
         if approved or rejected:

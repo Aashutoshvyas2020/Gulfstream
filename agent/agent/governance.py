@@ -75,7 +75,15 @@ class _Runner:
 class AgentRecord:
     """One agent's Governor session for one scan. Use one record per thread."""
 
-    def __init__(self, agent_id: str, objective: str, scope: list[str], run_tag: str) -> None:
+    def __init__(
+        self,
+        agent_id: str,
+        objective: str,
+        scope: list[str],
+        run_tag: str,
+        authorization: str | None = None,
+        file_suffix: str = "",
+    ) -> None:
         self.agent_id = agent_id
         self.ok = False
         self.domain_typed = False
@@ -86,7 +94,7 @@ class AgentRecord:
             TRACE_DIR.mkdir(parents=True, exist_ok=True)
             session_manager, cache = _collaborators()
             self._runner = _Runner()
-            sink = SinkWriter(FileSink(str(TRACE_DIR / f"{run_tag}-{agent_id}.jsonl")))
+            sink = SinkWriter(FileSink(str(TRACE_DIR / f"{run_tag}-{agent_id}{file_suffix}.jsonl")))
             self._session = wrap_mcp_client(
                 target=self._runner,
                 session_manager=session_manager,
@@ -95,6 +103,8 @@ class AgentRecord:
                 agent_id=agent_id,
                 stated_objective=objective,
                 declared_capabilities=scope,
+                # Recorded as the authorization claim on this session's declared intent
+                owner_claim=authorization,
             )
             # Governor's public entry is `async with`; the scan loop is synchronous and
             # threaded, so the session is opened and closed explicitly.
@@ -161,3 +171,22 @@ class AgentRecord:
             except Exception as exc:
                 print(f"Governor session for {self.agent_id} not closed cleanly: {exc}")
             self.ok = False
+
+
+def approved_record(agent_id: str, scope: list[str], item: dict[str, Any], run_tag: str) -> AgentRecord:
+    """A session for one human-approved Tier 3 action, carrying the approval in the record.
+
+    The proposal was recorded (and flagged) in the agent's own session when it was held.
+    The execution runs in this separate session, whose authorization claim names the
+    approval id and the approver, so the Governor record tells a held proposal apart from
+    an approved execution.
+    """
+    approver = item.get("approved_by") or "facility manager"
+    return AgentRecord(
+        agent_id,
+        objective=f"Carry out approved action {item['id']}: {item['action']}",
+        scope=scope,
+        run_tag=run_tag,
+        authorization=f"approved by {approver} ({item['id']})",
+        file_suffix=f"-approved-{item['id']}",
+    )
