@@ -56,11 +56,11 @@ The agent emits `antibody.scan.started`, `antibody.agent.report`, `antibody.scan
 
 ## Three lanes (one owner each)
 
-| Lane | Owns | Starts from |
-| :-- | :-- | :-- |
-| **1. Agents** | `agent/` | Tier 0–3 actions: add `<verb>_<object>` tools per agent (e.g. `reset_damper`, `shut_valve`), fixed thresholds in code (health < 70 escalates, 2 retries), an approval gate for Tier 3 actions and `start_automation` |
-| **2. Flower integration** | `antibody-web/server.py`, SuperLink / SuperGrid setup | Get SuperGrid access working; confirm the heartbeat fix; real network immunity with 2–3 buildings as SuperNodes using `agent.grid` (`get_nodes`, `push_messages`, `pull_messages`): lessons travel, readings never do |
-| **3. Frontend** | `antibody-web/static/` | Tier 3 approval prompt, the "actions → auto-fixes → escalations → 1 human decision" funnel, a multi-building view for network immunity |
+| Lane | Owner | Owns | Starts from |
+| :-- | :-- | :-- | :-- |
+| **1. Agents** | Roansh Desai | `agent/` | Tier 0–3 actions: add `<verb>_<object>` tools per agent (e.g. `reset_damper`, `shut_valve`), fixed thresholds in code (health < 70 escalates, 2 retries), an approval gate for Tier 3 actions and `start_automation` |
+| **2. Flower integration** | Aashutosh Vyas | `antibody-web/server.py`, SuperLink / SuperGrid setup | Get SuperGrid access working; confirm the heartbeat fix; real network immunity with 2–3 buildings as SuperNodes using `agent.grid` (`get_nodes`, `push_messages`, `pull_messages`): lessons travel, readings never do |
+| **3. Frontend** | Rikin Shah | `antibody-web/static/` | Tier 3 approval prompt, the "actions → auto-fixes → escalations → 1 human decision" funnel, a multi-building view for network immunity |
 
 If you change the shape of a run event, change it in all three lanes in the same pull request.
 
