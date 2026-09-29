@@ -46,13 +46,30 @@ uv run flwr chat        # then: /load .   and   Check the building.
 
 ## How a scan works
 
-1. **Sense.** The 11 specialists each read their system and return a JSON report (risk 0–1, confidence, finding, evidence, time to failure, fix).
+1. **Sense and act.** The specialists each read their system and return a JSON report (risk 0–1, confidence, finding, evidence, time to failure, fix) and at most one proposed action from their own tools, run under the tier rules below.
 2. **Rank.** Plain code scores `risk × consequence × urgency` and computes building health out of 100.
 3. **Investigate.** The coordinator calls Flower connectors: `web_search` / `web_fetch` for the safety standard, `slack` / `notion` for tenant reports and work orders (when bound), `start_automation` for "Watch 24/7".
 4. **Alert.** The alert streams to the console or `flwr chat`.
 5. **Remember.** Health history and the last exchange are kept in Flower run-series state (`context.state`), so the next scan reports the trend.
 
-The agent emits `antibody.scan.started`, `antibody.agent.report`, `antibody.scan.ranked` and `antibody.tool` run events. `server.py` relays them to the browser. This event contract is the boundary between the three lanes below.
+The agent emits `antibody.scan.started`, `antibody.agent.report`, `antibody.scan.ranked`, `antibody.tool`, `antibody.action` and `antibody.scan.funnel` run events. `server.py` relays them to the browser. This event contract is the boundary between the three lanes below.
+
+### Actions and approvals (`agent/agent/actions.py`)
+
+Each specialist may propose one action from its own tools. The tier decides what happens; the model never does.
+
+| Tier | What happens | `antibody.action` status |
+| :-- | :-- | :-- |
+| 0 Cleanup | Runs at once | `done` |
+| 1 Self-correction | Runs, re-checks its own fix; after 2 failed re-checks it escalates | `fixed`, `recheck_failed`, then `escalated` |
+| 2 Escalate | Also fired when building health is below 70, or an agent asks for another area's tool | `escalated`, `refused` |
+| 3 Human approval | Held with an id (`A1`, `A2`, …); `start_automation` is held the same way | `held`, then `executed` or `rejected` in a later message |
+
+A Flower run is one chat message, so a held action is decided in the next message of the run series: `approve A1`, `reject A2`, `approve all`, or JSON `{"approve": ["A1"], "by": "Dana"}`. Held actions and the simulated effects of past actions are kept in run-series state.
+
+`antibody.action` carries `agent`, `action` (e.g. `h2o.shut_valve`), `tier`, `status` and, when present, `attempt`, `approval_id`, `approved_by`, `reason`, `detail`. `antibody.scan.funnel` carries `actions`, `auto_fixes`, `escalations`, `human_decisions` and `pending` (the held actions, for the approval prompt).
+
+Tests: `cd agent && python -m unittest discover -s tests -v` (fake model, no SuperLink).
 
 ## Three lanes (one owner each)
 

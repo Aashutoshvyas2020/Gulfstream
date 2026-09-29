@@ -34,6 +34,7 @@ ENABLED = os.environ.get("ANTIBODY_GOVERNOR", "1") != "0"
 
 try:
     from sentience_governor.cache.cache import InProcessCache
+    from sentience_governor.schema.events import OperationType
     from sentience_governor.session_manager.manager import SessionManager
     from sentience_governor.sink.writer import FileSink, SinkWriter
     from sentience_governor.wrapper.mcp import wrap_mcp_client
@@ -89,15 +90,44 @@ class AgentRecord:
             # Governor's public entry is `async with`; the scan loop is synchronous and
             # threaded, so the session is opened and closed explicitly.
             self._session._start()
+            self._operation: str | None = None
+            self._use_declared_operation()
             self.ok = True
         except Exception as exc:
             print(f"Governor session for {agent_id} not started: {exc}")
 
-    def call(self, tool_name: str, fn: Callable[[], Any]) -> Any:
-        """Record `tool_name` and run `fn`. Fail-open: `fn` always runs exactly once."""
+    def _use_declared_operation(self) -> None:
+        """Let each call say what kind of operation it is.
+
+        Governor guesses READ / WRITE / EXECUTE from words in the tool name ("update",
+        "run", ...), so "h2o.shut_valve" would be recorded as a READ and the profiles'
+        read_to_write_transition would never fire. Governor has no public way to set
+        the type, so this replaces the guess on this session's proxy only. If that
+        internal ever changes, the guess stays and recording carries on.
+        """
+        try:
+            proxy = self._session._proxy
+            guess = proxy._infer_operation_type
+
+            def infer(tool_name: str, arguments: dict) -> Any:
+                if self._operation:
+                    return OperationType(self._operation)
+                return guess(tool_name, arguments)
+
+            proxy._infer_operation_type = infer
+        except Exception as exc:
+            print(f"Governor operation types for {self.agent_id} fall back to name guessing: {exc}")
+
+    def call(self, tool_name: str, fn: Callable[[], Any], operation: str | None = None) -> Any:
+        """Record `tool_name` and run `fn`. Fail-open: `fn` always runs exactly once.
+
+        `operation` (READ, WRITE, DELETE or EXECUTE) is what Governor records the call
+        as; when omitted, Governor guesses from the tool name.
+        """
         if not self.ok:
             return fn()
         state: dict[str, Any] = {}
+        self._operation = operation
 
         def run() -> Any:
             state["started"] = True
@@ -115,6 +145,7 @@ class AgentRecord:
             return fn()  # recording failed before the action ran
         finally:
             self._runner.pending = None
+            self._operation = None
 
     def close(self) -> None:
         if self.ok:

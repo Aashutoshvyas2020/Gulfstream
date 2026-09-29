@@ -92,6 +92,9 @@ All three validate: `sentience profile validate governance/profiles/<file>`.
 | ENV | `env` | `clear_alert`, `request_facade_rescan` |
 | AIR | `air` | `clear_alert`, `adjust_ventilation` (within limits) |
 | CYBER | `cyber` (read-only audit) | `clear_alert`, `run_audit` (no changes) |
+| GEN | `gen` | `clear_alert`, `reset_battery_charger` |
+| GAS | `gas` | `clear_alert`, `rebaseline_sensor`, `adjust_ventilation` (garage exhaust, within limits) |
+| EGRESS | `egress` | `clear_alert`, `run_emergency_light_test` |
 | Coordinator | connector tools (`web_search`, `web_fetch`, `slack`, `notion`, `start_automation`), work orders | `close_duplicate_work_order`, `rank`, `escalate` |
 
 ### What Governor adds to the demo

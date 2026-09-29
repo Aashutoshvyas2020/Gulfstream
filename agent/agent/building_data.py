@@ -1,7 +1,10 @@
 """Simulated sensor snapshot for the demo building (100,000 sq ft office, 7 floors).
 
 These readings are demo data, not a real building. Four areas carry a planted problem
-(PWR, ELEC, H2O, STR) and one carries a security weakness (CYBER); the rest are healthy.
+(PWR, ELEC, H2O, STR) and one carries a security weakness (CYBER). Three carry small
+faults a bot or an inspector can clear: a stuck chiller damper (HVAC), a tripped
+generator battery charger (GEN) and failed exit-sign self-tests (EGRESS). The rest are
+healthy. Actions in actions.py change these readings as simulated effects.
 Override any area at chat time by pasting JSON, e.g. {"H2O": {"night_flow_lpm_building_empty": 12}}.
 """
 
@@ -64,6 +67,8 @@ SNAPSHOT: dict[str, dict] = {
         "design_kw_per_ton": 0.62,
         "refrigerant_pressure_trend": "stable",
         "bearing_vibration_mm_s": 2.1,
+        "damper_position_percent": 20,
+        "damper_commanded_percent": 60,
     },
     "H2O": {
         "location": "Floor 4 east riser",
@@ -91,5 +96,26 @@ SNAPSHOT: dict[str, dict] = {
         "open_ports_to_internet": [47808],
         "firmware_age_months": 26,
         "failed_logins_24h": 37,
+    },
+    "GEN": {
+        "location": "B1 generator room, 500 kW diesel standby generator",
+        "starting_battery_voltage_v": 11.6,
+        "battery_charger": "tripped (overcurrent)",
+        "fuel_level_percent": 78,
+        "last_monthly_load_test": "2026-08-02",
+        "transfer_switch_faults_30d": 0,
+    },
+    "GAS": {
+        "location": "B1 boiler room and parking level P1",
+        "boiler_room_ch4_percent_lel": 1,
+        "garage_co_ppm": 14,
+        "garage_exhaust_fans": "running, auto mode",
+    },
+    "EGRESS": {
+        "location": "Stairs A and B, floors 1-7",
+        "exit_signs_failed_self_test": 2,
+        "emergency_lights_battery_fail": 1,
+        "fire_doors_propped_open": ["Stair B, floor 3"],
+        "last_annual_90_min_test": "2026-02-11",
     },
 }
