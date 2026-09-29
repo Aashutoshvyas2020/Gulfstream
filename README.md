@@ -106,7 +106,7 @@ Each specialist may propose one action from its own tools. The tier decides what
 | 0 Cleanup | Runs once; a re-read (rescan, remeasure) that still shows the problem escalates | `done`, or `recheck_failed` then `escalated` |
 | 1 Self-correction | Runs, re-checks its own fix; after 2 failed re-checks it escalates | `fixed`, `recheck_failed`, then `escalated` |
 | 2 Escalate | Also fired when building health is below 70, or an agent asks for another area's tool | `escalated`, `refused` |
-| 3 Human approval | Held with an id (`A1`, `A2`, …); `start_automation` is held the same way | `held`, then `executed` or `rejected` in a later message |
+| 3 Human approval | Held with an id (`A1`, `A2`, …) only when urgent (risk ≥ 0.8 or failure within a day), at most 3 per scan by priority; otherwise kept as advice. `start_automation` is held the same way | `held`, then `executed` or `rejected` in a later message; `advised` when not held |
 
 A Flower run is one chat message, so a held action is decided in the next message of the run series: `approve A1`, `reject A2`, `approve all`, or JSON `{"approve": ["A1"], "by": "Dana"}`. Held actions and the simulated effects of past actions are kept in run-series state.
 
@@ -171,6 +171,7 @@ Mitigations in `agent/agent/agent_app.py` (not verified on SuperGrid yet):
 - Every step writes a timestamped line to the run log (`[HH:MM:SS] investigate: turn 1 model call`), so `flwr log <run-id> supergrid --show` shows where a killed run stopped.
 - The investigation is best effort: each of its model calls times out after `ANTIBODY_INVESTIGATE_TIMEOUT` seconds (default 50), and a slow or failed call ends it; the alert still goes out and says what could not be checked.
 - The coordinator's requests are compact JSON without the fields it does not use.
+- The coordinator is given `web_search` / `web_fetch` only; Slack / Notion when the message mentions them (tenants, complaints, work orders), and `start_automation` when it asks for monitoring. Fewer tools make each call faster.
 - If the alert's model call fails too (SuperGrid run `7689180499312021667`: `model_response_timeout` from Flower's model service), plain code writes the alert from the scan: health, the ranked table, what the agents did and what needs approval. Every scan ends with an answer.
 - `ANTIBODY_INVESTIGATE=0` skips the investigation (demo-safe mode).
 - These settings are read where the app runs: set them on a local SuperLink's shell. On SuperGrid the defaults apply.

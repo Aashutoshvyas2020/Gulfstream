@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -38,6 +39,14 @@ from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
 MODEL = os.environ.get("ANTIBODY_MODEL", "flower-endeavor-v1.0")
 # Built-in connectors, then account connectors (these only work when bound to the run)
 CONNECTOR_REFS = ("web_search", "web_fetch", "start_automation", "slack", "notion")
+# The coordinator always gets the safety-standard lookup. Slack / Notion and
+# start_automation are only offered when the message asks for them: every extra tool
+# makes each investigation call slower, and Endeavor already needs most of its time limit.
+STANDARD_REFS = ("web_search", "web_fetch")
+ASKS_FOR_ACCOUNTS = re.compile(r"\b(slack|notion|tenants?|complaints?|work ?orders?|tickets?)\b", re.I)
+ASKS_FOR_MONITORING = re.compile(
+    r"\b(watch(ing)?|monitor(ing)?|schedule|automation|recurring|every \d+|24/?7|around the clock)\b", re.I
+)
 MAX_TOOL_TURNS = 4
 # The investigation is best effort: each of its model calls gets this many seconds, and a
 # slow or failed call ends it so the alert still goes out. A call that blocks for about a
@@ -89,7 +98,7 @@ One row per problem area, in the ranked order given, all {count} rows.
 For each: what is wrong, the evidence (sensor readings plus any matching Slack or Notion report), who to call, the fix, the deadline, and the standard cited with a link when one was found.
 
 **What the agents did**
-One line per entry in the scan's actions list: fixes made and re-checked, re-checks that failed, escalations, and approved actions carried out. Omit this section when the list is empty.
+One line per entry in the scan's actions list: fixes made and re-checked, re-checks that failed, escalations, and approved actions carried out. List "advised" entries as recommendations, not as decisions. Omit this section when the list is empty.
 
 **Needs your approval**
 One line per entry in pending_approvals: its id, the action, the agent, why, and what it will do. End with: Reply "approve <id>" or "reject <id>" (or "approve all"). Omit this section when there are none.
@@ -207,7 +216,8 @@ def run_specialist(
 
         parsed = assess(client, record, code, readings, prompt)
         proposal = parsed.get("proposed_action")
-        step = actions.act(record, code, proposal, readings)
+        urgent = actions.is_urgent(parsed.get("risk_score"), parsed.get("time_to_failure_days"))
+        step = actions.act(record, code, proposal, readings, urgent=urgent)
         done.outcomes += step.outcomes
         done.changes.update(step.changes)
         done.held += step.held
@@ -374,10 +384,20 @@ class Approvals:
         return approval_id, "held"
 
 
-def connector_tools(agent: AgentSession) -> list[dict[str, Any]]:
+def connector_refs(prompt: str) -> tuple[str, ...]:
+    """The connectors this message needs: standards always, the rest only when asked for."""
+    refs = list(STANDARD_REFS)
+    if ASKS_FOR_ACCOUNTS.search(prompt):
+        refs += ["slack", "notion"]
+    if ASKS_FOR_MONITORING.search(prompt):
+        refs.append(actions.AUTOMATION_TOOL)
+    return tuple(refs)
+
+
+def connector_tools(agent: AgentSession, refs: tuple[str, ...] = CONNECTOR_REFS) -> list[dict[str, Any]]:
     """Collect tools one connector at a time, so an unavailable one does not hide the rest."""
     tools: list[dict[str, Any]] = []
-    for ref in CONNECTOR_REFS:
+    for ref in refs:
         try:
             tools.extend(agent.connectors.tools([ref]))
         except Exception as exc:  # unbound account connector or unsupported runtime
@@ -412,12 +432,13 @@ def investigate(
     input_items: list[dict[str, Any]],
     record: AgentRecord,
     hold_connector: Callable[[dict[str, Any]], str],
+    refs: tuple[str, ...] = CONNECTOR_REFS,
 ) -> None:
     """Bounded connector loop: standards and Slack / Notion evidence.
 
     A Tier 3 connector (building_domain.tier, e.g. start_automation) is held for approval.
     """
-    tools = connector_tools(agent)
+    tools = connector_tools(agent, refs)
     if not tools:
         return
     allowed = {t["name"] for t in tools if isinstance(t.get("name"), str)}
@@ -674,14 +695,24 @@ def main(agent: AgentSession, context: Context) -> None:
                     if item["status"] == "escalated":
                         coordinator.call(actions.ESCALATE_ID, lambda: None)
                     emit_outcome(item)
-                for item in report["held"]:
-                    approval_id, status = approvals.hold(item)
-                    emit_outcome(actions.outcome(code, item["action"], actions.APPROVAL, status,
-                                                 approval_id=approval_id, reason=item.get("reason", "")))
-        save_actions(context, memory)
-
         # 2. Rank and score; health below the threshold escalates
         ranked, health = rank_reports(reports)
+
+        # Urgent Tier 3 proposals, highest priority first: at most MAX_HELD_PER_SCAN are held
+        held_count = 0
+        for report in ranked:
+            for item in report["held"]:
+                if held_count >= actions.MAX_HELD_PER_SCAN:
+                    emit_outcome(actions.outcome(
+                        report["subsystem"], item["action"], actions.APPROVAL, "advised",
+                        reason=item.get("reason", ""),
+                        detail=f"lower priority than the {actions.MAX_HELD_PER_SCAN} actions held this scan"))
+                    continue
+                approval_id, status = approvals.hold(item)
+                held_count += status == "held"
+                emit_outcome(actions.outcome(report["subsystem"], item["action"], actions.APPROVAL, status,
+                                             approval_id=approval_id, reason=item.get("reason", "")))
+        save_actions(context, memory)
         previous = history[-1]["health"] if history else None
         agent.events.emit(
             {"type": EVENT_SCAN_RANKED, "health": health, "previous_health": previous, "ranked": ranked}
@@ -731,7 +762,7 @@ def main(agent: AgentSession, context: Context) -> None:
         )
         if INVESTIGATE:
             try:
-                investigate(agent, client, input_items, coordinator, hold_connector)
+                investigate(agent, client, input_items, coordinator, hold_connector, connector_refs(prompt))
             except Exception as exc:  # best effort: the alert goes out without it
                 log(f"investigate: stopped ({type(exc).__name__}: {str(exc)[:200]})")
                 input_items.append(

@@ -35,6 +35,11 @@ MAX_FIX_ATTEMPTS = 2  # a Tier 1 loop stops and escalates after this many failed
 SETPOINT_LIMIT_PERCENT = 15  # autonomous ventilation / setpoint changes stay within +/- this
 ISOLATION_MAX_LPM = 10.0  # night-flow isolation contains a branch leak; above this it is the riser
 APPROVAL_START_DELAY = timedelta(minutes=2)  # an approved automation starts this long after approval
+# A Tier 3 proposal is held for a human only when its problem is urgent; otherwise it is
+# advice in the report. At most MAX_HELD_PER_SCAN are held per scan, highest priority first.
+URGENT_RISK = 0.8
+URGENT_DAYS = 1.0
+MAX_HELD_PER_SCAN = 3
 
 CLEANUP, SELF_CORRECT, ESCALATE, APPROVAL = 0, 1, 2, 3
 
@@ -400,10 +405,25 @@ def apply(record: Any, action: Action, readings: Readings, args: dict[str, Any])
     return changes
 
 
-def act(record: Any, code: str, proposal: Any, readings: Readings) -> ActResult:
+def is_urgent(risk_score: Any, time_to_failure_days: Any) -> bool:
+    """Urgent enough for a human decision now: high risk, or failure within about a day."""
+    try:
+        if float(risk_score) >= URGENT_RISK:
+            return True
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(time_to_failure_days) <= URGENT_DAYS
+    except (TypeError, ValueError):
+        return False
+
+
+def act(record: Any, code: str, proposal: Any, readings: Readings, urgent: bool = True) -> ActResult:
     """Carry out one specialist's proposed action under the tier rules.
 
     `readings` is this area's readings; simulated effects are applied to it in place.
+    `urgent` (see is_urgent) decides whether a Tier 3 proposal is held for a human or
+    kept as advice.
     """
     result = ActResult()
     parsed = parse_proposal(proposal)
@@ -460,6 +480,14 @@ def act(record: Any, code: str, proposal: Any, readings: Readings) -> ActResult:
 
     if action.tier != APPROVAL:  # a Tier 2 row: the action is the escalation itself
         result.outcomes.append(outcome(code, ESCALATE_ID, ESCALATE, "escalated", detail=f"{code} asked to escalate"))
+        return result
+
+    if not urgent:
+        # Not urgent: the recommendation stays in the report, and nobody is asked to decide
+        result.outcomes.append(
+            outcome(code, action.id, APPROVAL, "advised", reason=reason,
+                    detail="not urgent enough for an approval; recommended in the report")
+        )
         return result
 
     # Tier 3: record the attempt (Governor flags it as high-consequence), then hold it
@@ -547,6 +575,7 @@ def rescheduled_automation(arguments: str, now: datetime) -> str:
 def funnel(outcomes: list[dict[str, Any]], pending: list[dict[str, Any]]) -> dict[str, int]:
     """Actions -> autonomous fixes -> escalations -> human decisions, for this scan."""
     attempts = [o for o in outcomes if o["status"] in {"done", "fixed", "recheck_failed", "refused", "held", "executed"}]
+    # "advised" is a recommendation, not an action, so it is not counted
     return {
         "actions": len(attempts),
         "auto_fixes": sum(1 for o in outcomes if o["status"] in {"done", "fixed"}),

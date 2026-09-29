@@ -129,6 +129,19 @@ class TierRulesTest(unittest.TestCase):
         self.assertEqual(r["night_flow_lpm_building_empty"], 14)  # nothing changed
         self.assertEqual(record.calls, [("h2o.shut_valve", None)])  # the attempt is on record
 
+    def test_tier3_that_is_not_urgent_is_advice(self):
+        record = FakeRecord()
+        result = actions.act(record, "ELEC", {"tool": "elec.dispatch_contractor"}, readings("ELEC"), urgent=False)
+        self.assertEqual([o["status"] for o in result.outcomes], ["advised"])
+        self.assertEqual(result.held, [])
+        self.assertEqual(record.calls, [])  # nothing attempted, nothing for Governor to flag
+
+    def test_urgency(self):
+        self.assertTrue(actions.is_urgent(0.85, None))
+        self.assertTrue(actions.is_urgent(0.3, 0.5))
+        self.assertFalse(actions.is_urgent(0.7, 3))
+        self.assertFalse(actions.is_urgent("n/a", None))
+
     def test_another_areas_tool_is_refused_and_escalated(self):
         record = FakeRecord()
         result = actions.act(record, "HVAC", {"tool": "h2o.shut_valve"}, readings("HVAC"))
@@ -270,13 +283,32 @@ class ScanTest(unittest.TestCase):
 
     def test_rejected_action_is_dropped(self):
         state: dict = {}
-        model = FakeModel(propose={"CYBER": {"tool": "cyber.close_port", "args": {"port": 47808}}})
+        model = FakeModel(risk={"CYBER": 0.9}, propose={"CYBER": {"tool": "cyber.close_port", "args": {"port": 47808}}})
         events, _ = scan("Check the building.", state, model)
         approval_id = of_type(events, "antibody.scan.funnel")[0]["pending"][0]["id"]
         events, _ = scan(f"reject {approval_id}", state, model)
         statuses = [e["status"] for e in of_type(events, "antibody.action") if e["agent"] == "CYBER"]
         self.assertEqual(statuses, ["rejected", "skipped"])
         self.assertEqual(of_type(events, "antibody.scan.funnel")[0]["pending"], [])
+
+    def test_at_most_three_approvals_per_scan_highest_priority_first(self):
+        risky = {c: 0.9 for c in ("PWR", "ELEC", "H2O", "STR", "CYBER")}
+        propose = {c: {"tool": f"{c.lower()}.dispatch_contractor"} for c in ("PWR", "ELEC", "H2O", "STR")}
+        propose["CYBER"] = {"tool": "cyber.close_port", "args": {"port": 47808}}
+        events, _ = scan("Check the building.", {}, FakeModel(risk=risky, propose=propose))
+        pending = of_type(events, "antibody.scan.funnel")[0]["pending"]
+        self.assertEqual(len(pending), actions.MAX_HELD_PER_SCAN)
+        ranked = [r["subsystem"] for r in of_type(events, "antibody.scan.ranked")[0]["ranked"]]
+        self.assertEqual([p["agent"] for p in pending], [c for c in ranked if c in propose][:3])
+        advised = [e for e in of_type(events, "antibody.action") if e["status"] == "advised"]
+        self.assertEqual(len(advised), 2)
+
+    def test_coordinator_gets_only_the_tools_the_message_asks_for(self):
+        self.assertEqual(agent_app.connector_refs("Check the building."), ("web_search", "web_fetch"))
+        self.assertIn("start_automation", agent_app.connector_refs("Watch it 24/7"))
+        self.assertIn("start_automation", agent_app.connector_refs("then keep watching it"))
+        self.assertIn("slack", agent_app.connector_refs("Any tenant complaints?"))
+        self.assertNotIn("start_automation", agent_app.connector_refs("approve A1"))
 
     def test_failed_agent_lowers_health(self):
         healthy, _ = scan("Check the building.", {}, FakeModel())
