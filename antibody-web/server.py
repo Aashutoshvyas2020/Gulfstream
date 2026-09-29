@@ -235,9 +235,9 @@ def stop_run(run_id: int) -> dict[str, bool]:
 
 @app.get("/")
 def home() -> FileResponse:
-    """The story page (static/story/) if present, else the console."""
-    story = STATIC / "story" / "index.html"
-    return FileResponse(story if story.exists() else STATIC / "index.html")
+    """The Antibody site (static/site/) if present, else the console."""
+    site = STATIC / "site" / "index.html"
+    return FileResponse(site if site.exists() else STATIC / "index.html")
 
 
 @app.get("/console")
