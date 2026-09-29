@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antibody</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<style>
+:root{
+  --bg:#060A12; --bg-2:#0A1020; --panel:#0E1628; --panel-2:#121C33; --line:#1D2A45; --line-2:#26365A;
+  --ink:#E8EEF8; --ink-2:#B9C6DC; --muted:#7D8CA8;
+  --cell:#2EE6A6; --cell-soft:rgba(46,230,166,.14);
+  --watch:#FFB547; --watch-soft:rgba(255,181,71,.14);
+  --infect:#FF3D7F; --infect-soft:rgba(255,61,127,.16);
+  --scan:#4CC9F0; --scan-soft:rgba(76,201,240,.14);
+  --off:#56627A;
+  --r:14px; --gutter:clamp(16px,4vw,48px);
+  --display:"Space Grotesk",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--display);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(900px 500px at 85% -10%,rgba(76,201,240,.10),transparent 60%),
+             radial-gradient(700px 500px at -10% 30%,rgba(46,230,166,.07),transparent 60%)}
+a{color:var(--scan)}
+.wrap{position:relative;z-index:1;max-width:1320px;margin:0 auto;padding:0 var(--gutter)}
+.mono{font-family:var(--mono)}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--scan)}
+
+/* top bar */
+header.top{position:sticky;top:0;z-index:20;background:rgba(6,10,18,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+header.top .wrap{display:flex;align-items:center;gap:16px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px;letter-spacing:-.01em}
+.brand svg{width:28px;height:28px}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--line-2);border-radius:999px;font:500 12px/1 var(--mono);color:var(--ink-2);white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--off)}
+.dot.live{background:var(--cell);box-shadow:0 0 0 0 rgba(46,230,166,.6);animation:ping 2s infinite}
+.dot.bad{background:var(--infect)}
+@keyframes ping{0%{box-shadow:0 0 0 0 rgba(46,230,166,.55)}70%{box-shadow:0 0 0 9px rgba(46,230,166,0)}100%{box-shadow:0 0 0 0 rgba(46,230,166,0)}}
+nav.links{margin-left:auto;display:flex;gap:18px;font-size:14px}
+nav.links a{color:var(--ink-2);text-decoration:none}
+nav.links a:hover{color:var(--ink)}
+
+/* hero */
+.hero{padding:72px 0 40px;display:grid;grid-template-columns:1.2fr .8fr;gap:48px;align-items:center}
+.hero h1{font-size:clamp(40px,6vw,76px);line-height:.98;letter-spacing:-.035em;margin:14px 0 18px;font-weight:700}
+.hero h1 em{font-style:normal;background:linear-gradient(90deg,var(--cell),var(--scan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lede{font-size:clamp(16px,1.6vw,19px);color:var(--ink-2);max-width:620px;margin:0 0 28px}
+.cta{display:flex;gap:12px;flex-wrap:wrap}
+.btn{appearance:none;border:1px solid var(--line-2);background:var(--panel);color:var(--ink);font:600 14px/1 var(--display);padding:13px 18px;border-radius:12px;cursor:pointer;transition:transform .15s,background .15s,border-color .15s}
+.btn:hover{transform:translateY(-1px);border-color:var(--scan)}
+.btn.primary{background:linear-gradient(135deg,var(--cell),#1FB8D8);color:#03121A;border:0}
+.btn.primary:disabled{opacity:.5;cursor:progress;transform:none}
+.btn.ghost{background:transparent}
+.btn.danger{border-color:rgba(255,61,127,.5);color:var(--infect);background:transparent}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.stat{border:1px solid var(--line);border-radius:var(--r);padding:18px;background:linear-gradient(180deg,var(--panel),var(--bg-2))}
+.stat b{display:block;font-size:34px;letter-spacing:-.03em}
+.stat span{color:var(--muted);font-size:13px}
+.hero-art{position:relative;aspect-ratio:1;max-width:420px;justify-self:center;width:100%}
+
+/* sections */
+section{padding:56px 0}
+.sec-head{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:24px;flex-wrap:wrap}
+.sec-head h2{font-size:clamp(28px,3.4vw,42px);letter-spacing:-.03em;margin:10px 0 0;line-height:1.05}
+.sec-head p{color:var(--ink-2);max-width:520px;margin:0}
+
+/* console */
+.console{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:20px}
+.panel{background:linear-gradient(180deg,var(--panel),var(--bg-2));border:1px solid var(--line);border-radius:18px;padding:18px}
+.panel h3{margin:0 0 12px;font-size:13px;font:600 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.building svg{width:100%;height:auto;display:block}
+.floor{fill:#0B1326;stroke:var(--line-2);stroke-width:1}
+.floor.below{fill:#080E1D}
+.win{fill:#16223D}
+.lbl{font:500 9px var(--mono);fill:var(--muted)}
+.hs circle.core{transition:fill .4s,r .4s}
+.hs text{font:600 10px var(--mono);fill:var(--ink-2);pointer-events:none}
+.hs{cursor:pointer}
+.hs .ring{fill:none;stroke-width:2;opacity:0}
+.hs[data-s="idle"] .core{fill:var(--off)}
+.hs[data-s="scanning"] .core{fill:var(--scan)}
+.hs[data-s="scanning"] .ring{stroke:var(--scan);animation:ring 1.4s infinite}
+.hs[data-s="healthy"] .core{fill:var(--cell)}
+.hs[data-s="watch"] .core{fill:var(--watch)}
+.hs[data-s="watch"] .ring{stroke:var(--watch);animation:ring 2.2s infinite}
+.hs[data-s="infected"] .core{fill:var(--infect)}
+.hs[data-s="infected"] .ring{stroke:var(--infect);animation:ring 1s infinite}
+.hs[data-s="offline"] .core{fill:#2A3348}
+.hs.focus .core{stroke:#fff;stroke-width:2}
+@keyframes ring{0%{r:9;opacity:.9}100%{r:26;opacity:0}}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font:500 11px var(--mono);color:var(--muted)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+
+.right{display:grid;gap:20px;min-width:0}
+.vitals{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center}
+.gauge{position:relative;width:150px;height:150px}
+.gauge svg{transform:rotate(-90deg)}
+.gauge .track{stroke:var(--line);fill:none;stroke-width:12}
+.gauge .val{fill:none;stroke-width:12;stroke-linecap:round;transition:stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1),stroke .4s}
+.gauge .num{position:absolute;inset:0;display:grid;place-content:center;text-align:center}
+.gauge .num b{font-size:40px;letter-spacing:-.04em;line-height:1}
+.gauge .num span{font:500 11px var(--mono);color:var(--muted);letter-spacing:.1em}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--bg-2)}
+.kpi b{display:block;font-size:22px;letter-spacing:-.02em}
+.kpi span{font:500 11px var(--mono);color:var(--muted)}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px}
+.status-line{font:500 12px var(--mono);color:var(--muted);margin-left:auto}
+
+.inject{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px dashed var(--line-2);background:transparent;color:var(--ink-2);padding:8px 12px;border-radius:999px;font:500 12px var(--mono);cursor:pointer;transition:all .15s}
+.chip:hover{border-color:var(--infect);color:var(--ink)}
+.chip[aria-pressed="true"]{border-style:solid;border-color:var(--infect);background:var(--infect-soft);color:#fff}
+.chip.heal[aria-pressed="true"]{border-color:var(--cell);background:var(--cell-soft)}
+.chip.acct:hover{border-color:var(--scan)}
+.chip.acct[aria-pressed="true"]{border-style:solid;border-color:var(--scan);background:var(--scan-soft)}
+.split{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;margin-top:18px}
+.trend{font:500 12px var(--mono);color:var(--muted);margin-top:10px;min-height:16px}
+.trend b.up{color:var(--cell)} .trend b.down{color:var(--infect)}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.tool{font:500 11.5px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:6px 9px;transition:all .3s}
+.tool b{color:var(--ink-2);margin-left:4px}
+.tool.used{color:var(--ink);border-color:var(--scan);background:var(--scan-soft)}
+.tool.flash{box-shadow:0 0 0 3px rgba(76,201,240,.35)}
+.tool.err{border-color:rgba(255,61,127,.5)}
+@media (max-width:1000px){.split{grid-template-columns:1fr}}
+
+.cells{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.cell{position:relative;border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--bg-2);overflow:hidden;cursor:pointer;transition:border-color .3s,transform .15s}
+.cell:hover{transform:translateY(-2px)}
+.cell .top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cell .code{font:700 12px var(--mono);padding:4px 7px;border-radius:6px;background:var(--panel-2);color:var(--ink)}
+.cell .name{font-weight:600;font-size:14px}
+.cell .rank{margin-left:auto;font:600 11px var(--mono);color:var(--muted)}
+.cell .state{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.cell .finding{font-size:13px;color:var(--ink-2);margin:6px 0 10px;min-height:38px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bar{height:6px;border-radius:6px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;width:0;border-radius:6px;transition:width .8s cubic-bezier(.2,.8,.2,1),background .3s}
+.cell .meta{display:flex;justify-content:space-between;margin-top:6px;font:500 11px var(--mono);color:var(--muted)}
+.cell[data-s="scanning"]::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(76,201,240,.12) 50%,transparent 70%);background-size:200% 100%;animation:shimmer 1.4s infinite}
+@keyframes shimmer{0%{background-position:150% 0}100%{background-position:-50% 0}}
+.cell[data-s="healthy"]{border-color:rgba(46,230,166,.35)}
+.cell[data-s="watch"]{border-color:rgba(255,181,71,.45)}
+.cell[data-s="infected"]{border-color:rgba(255,61,127,.6);box-shadow:0 0 0 1px rgba(255,61,127,.25),0 10px 30px -12px rgba(255,61,127,.45)}
+.cell.open .finding{-webkit-line-clamp:unset}
+.cell .more{display:none;font-size:12.5px;color:var(--ink-2);border-top:1px solid var(--line);margin-top:10px;padding-top:10px}
+.cell.open .more{display:block}
+.cell .more b{color:var(--ink);font-weight:600}
+
+.twocol{display:grid;grid-template-columns:1fr 1.4fr;gap:20px}
+.feed{font:500 12px/1.7 var(--mono);color:var(--ink-2);max-height:360px;overflow:auto;margin:0;padding:0;list-style:none}
+.feed li{padding:4px 0;border-bottom:1px dashed var(--line);display:flex;gap:10px}
+.feed time{color:var(--muted);flex:none}
+.feed .t-inf{color:var(--infect)} .feed .t-ok{color:var(--cell)} .feed .t-w{color:var(--watch)} .feed .t-s{color:var(--scan)}
+.alert{min-height:200px;max-height:560px;overflow:auto;font-size:14px;color:var(--ink-2)}
+.alert:empty::before{content:"The coordinator's alert streams here after the 11 agents report.";color:var(--muted)}
+.alert h1,.alert h2,.alert h3{color:var(--ink);font-size:16px;margin:16px 0 8px}
+.alert strong{color:var(--ink)}
+.alert table{width:100%;border-collapse:collapse;font-size:12.5px;margin:10px 0;display:block;overflow-x:auto}
+.alert th,.alert td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.alert th{color:var(--muted);font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.06em}
+.alert hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+.alert ul{padding-left:18px}
+.caret{display:inline-block;width:8px;height:15px;background:var(--scan);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.ask{display:flex;gap:10px;margin-top:14px}
+.ask input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line-2);border-radius:12px;color:var(--ink);padding:12px 14px;font:14px var(--display)}
+.ask input:focus{outline:none;border-color:var(--scan)}
+.banner{display:none;border:1px solid rgba(255,61,127,.5);background:var(--infect-soft);border-radius:12px;padding:12px 14px;font-size:13.5px;margin-bottom:16px}
+.banner.show{display:block}
+
+/* immunity network */
+.net{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;align-items:center}
+.net svg{width:100%;height:auto}
+.node circle.b{fill:var(--panel-2);stroke:var(--line-2);stroke-width:1.5;transition:all .5s}
+.node.sick circle.b{fill:rgba(255,61,127,.25);stroke:var(--infect)}
+.node.immune circle.b{stroke:var(--cell);fill:rgba(46,230,166,.12)}
+.node .shield{fill:none;stroke:var(--cell);stroke-width:2;opacity:0;transition:opacity .5s}
+.node.immune .shield{opacity:1}
+.node text{font:600 11px var(--mono);fill:var(--ink-2)}
+.link{stroke:var(--line-2);stroke-width:1.2;stroke-dasharray:3 5}
+.packet{fill:var(--cell);filter:drop-shadow(0 0 6px var(--cell))}
+.travels{display:grid;gap:12px}
+.travels .box{border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--bg-2)}
+.travels .box b{display:block;margin-bottom:6px}
+.tag{display:inline-block;font:600 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 8px;border-radius:6px;border:1px solid var(--line-2);color:var(--muted)}
+
+/* how */
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;counter-reset:s}
+.step{border:1px solid var(--line);border-radius:16px;padding:18px;background:linear-gradient(180deg,var(--panel),var(--bg-2));position:relative}
+.step::before{counter-increment:s;content:"0" counter(s);font:600 12px var(--mono);color:var(--scan)}
+.step h4{margin:8px 0 6px;font-size:18px}
+.step p{margin:0 0 10px;color:var(--ink-2);font-size:14px}
+.step .fl{font:500 11.5px var(--mono);color:var(--cell)}
+footer{border-top:1px solid var(--line);padding:28px 0 48px;color:var(--muted);font-size:13px}
+
+@media (max-width:1000px){
+  .hero,.console,.twocol,.net{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr 1fr}
+  .hero-art{max-width:320px}
+  nav.links{display:none}
+}
+@media (max-width:560px){
+  .stats,.kpis{grid-template-columns:1fr 1fr}
+  .steps{grid-template-columns:1fr}
+  .vitals{grid-template-columns:1fr;justify-items:center}
+  header.top .pill.conn{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 30V17M16 17 7 8M16 17l9-9M7 8 4 5M7 8l-3 3M25 8l3-3M25 8l3 3" stroke="url(#g)" stroke-width="3" stroke-linecap="round" fill="none"/><defs><linearGradient id="g" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#2EE6A6"/><stop offset="1" stop-color="#4CC9F0"/></linearGradient></defs></svg>
+      Antibody
+    </div>
+    <span class="pill conn"><span class="dot" id="connDot"></span><span id="connText">connecting…</span></span>
+    <nav class="links"><a href="#console">Live scan</a><a href="#immunity">Network immunity</a><a href="#how">How it works</a></nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <div class="eyebrow">An immune system for buildings</div>
+      <h1>Buildings get sick.<br><em>Antibody</em> fights back.</h1>
+      <p class="lede">11 AI agents each hunt one kind of failure (a hot breaker, a hidden leak, a widening crack, an open door into the control system) around the clock. When one building beats a failure, every building on the network becomes immune to it, and no building ever shares its data.</p>
+      <div class="cta">
+        <button class="btn primary" id="heroScan">Run a live scan</button>
+        <a class="btn ghost" href="#immunity" style="text-decoration:none">How immunity spreads</a>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>11</b><span>threats hunted</span></div>
+      <div class="stat"><b>1</b><span>coordinator that ranks them</span></div>
+      <div class="stat"><b>0</b><span>readings that leave the building</span></div>
+    </div>
+  </section>
+
+  <section id="console">
+    <div class="sec-head">
+      <div><div class="eyebrow">Live · real Flower agents</div><h2>Scan Harbor Point Tower</h2></div>
+      <p>Each scan starts a real Flower run: 11 specialist agents examine their system in parallel, the coordinator ranks every threat by risk × consequence × urgency and writes the alert.</p>
+    </div>
+    <div class="banner" id="banner"></div>
+
+    <div class="console">
+      <div class="panel building">
+        <h3 id="bldName">Building</h3>
+        <svg viewBox="0 0 420 560" id="bldSvg" role="img" aria-label="Building cross-section with 11 monitored areas"></svg>
+        <div class="legend">
+          <span><i style="background:var(--off)"></i>idle</span>
+          <span><i style="background:var(--scan)"></i>scanning</span>
+          <span><i style="background:var(--cell)"></i>healthy</span>
+          <span><i style="background:var(--watch)"></i>watch</span>
+          <span><i style="background:var(--infect)"></i>infected</span>
+        </div>
+      </div>
+
+      <div class="right">
+        <div class="panel">
+          <div class="vitals">
+            <div class="gauge">
+              <svg viewBox="0 0 150 150" width="150" height="150"><circle class="track" cx="75" cy="75" r="62"/><circle class="val" id="gaugeVal" cx="75" cy="75" r="62" stroke-dasharray="389.6" stroke-dashoffset="389.6" stroke="var(--cell)"/></svg>
+              <div class="num"><b id="healthNum">—</b><span>HEALTH</span></div>
+            </div>
+            <div>
+              <div class="kpis">
+                <div class="kpi"><b id="kReported">0/11</b><span>agents reported</span></div>
+                <div class="kpi"><b id="kInfected" style="color:var(--infect)">0</b><span>infected</span></div>
+                <div class="kpi"><b id="kWatch" style="color:var(--watch)">0</b><span>on watch</span></div>
+                <div class="kpi"><b id="kTime">0s</b><span>scan time</span></div>
+              </div>
+              <div class="controls">
+                <button class="btn primary" id="scanBtn">Scan building</button>
+                <button class="btn" id="watchBtn" title="Asks the coordinator to schedule recurring scans with Flower's start_automation connector">Watch 24/7</button>
+                <button class="btn danger" id="stopBtn" hidden>Stop</button>
+                <button class="btn ghost" id="newBtn" title="Start a new run series: clears chat history and health trend">New session</button>
+              </div>
+              <div class="trend" id="trend"></div>
+              <div class="status-line" id="statusLine" style="margin:8px 0 0">Ready</div>
+            </div>
+          </div>
+          <div class="split">
+            <div>
+              <h3>Inject a change before the next scan</h3>
+              <div class="inject" id="inject"></div>
+            </div>
+            <div>
+              <h3>Account connectors for the next scan</h3>
+              <div class="inject" id="accounts">
+                <button class="chip acct" data-ref="slack" aria-pressed="false">Slack · tenant reports</button>
+                <button class="chip acct" data-ref="notion" aria-pressed="false">Notion · work orders</button>
+              </div>
+            </div>
+          </div>
+          <div class="tools" id="tools">
+            <span class="tool" data-t="web_search">web_search <b>0</b></span>
+            <span class="tool" data-t="web_fetch">web_fetch <b>0</b></span>
+            <span class="tool" data-t="slack">slack <b>0</b></span>
+            <span class="tool" data-t="notion">notion <b>0</b></span>
+            <span class="tool" data-t="start_automation">start_automation <b>0</b></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>The 11 hunters</h3>
+          <div class="cells" id="cells"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="twocol" style="margin-top:20px">
+      <div class="panel"><h3>Swarm feed</h3><ul class="feed" id="feed"></ul></div>
+      <div class="panel">
+        <h3>Coordinator alert</h3>
+        <div class="alert" id="alert"></div>
+        <form class="ask" id="askForm">
+          <input id="askInput" placeholder="Ask Antibody, e.g. What must be fixed tonight? (runs a fresh scan)" aria-label="Ask Antibody">
+          <button class="btn" type="submit">Ask</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section id="immunity">
+    <div class="sec-head">
+      <div><div class="eyebrow">The moat · roadmap</div><h2>One building gets sick.<br>Every building gets immune.</h2></div>
+      <p>Built on Flower federation: each building keeps its own agents and data on site. Only the lesson learned travels, never a reading, a camera frame or a floor plan.</p>
+    </div>
+    <div class="net">
+      <div class="panel">
+        <svg viewBox="0 0 520 360" id="netSvg" aria-label="Network of buildings sharing immunity"></svg>
+        <div class="controls"><button class="btn" id="playNet">Play: battery failure at Harbor Point</button><span class="status-line" id="netStatus">7 buildings on the network</span></div>
+      </div>
+      <div class="travels">
+        <div class="box"><span class="tag">Stays home</span><b>Every reading, image and plan</b>Sensor streams, BMS points, cameras and floor plans never leave the building's own edge box.</div>
+        <div class="box"><span class="tag" style="color:var(--cell);border-color:var(--cell)">Travels</span><b>The antibody</b>What the agents learned: "this battery model, this temperature curve and this fan fault came before a thermal event." Flower federated learning shares that update, not the data behind it.</div>
+        <div class="box"><span class="tag">Why it compounds</span><b>Every building makes the network smarter</b>The 100th building on Antibody is protected by the failures of the first 99, and no competitor can buy that history.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="sec-head"><div><div class="eyebrow">Under the hood</div><h2>Sense. Rank. Alert. Remember.</h2></div></div>
+    <div class="steps">
+      <div class="step"><h4>Sense</h4><p>11 specialist agents each read their own system and file a report with a risk, evidence and a fix.</p><div class="fl">Flower AgentApp · parallel agents</div></div>
+      <div class="step"><h4>Rank</h4><p>The coordinator ranks every threat by risk × consequence × urgency in plain code, so every decision can be audited.</p><div class="fl">Deterministic scoring</div></div>
+      <div class="step"><h4>Investigate</h4><p>It cites the governing safety standard, checks Slack for tenant reports and Notion for open work orders, and schedules round-the-clock rescans.</p><div class="fl">Connectors · web_search · web_fetch · slack · notion · start_automation</div></div>
+      <div class="step"><h4>Remember</h4><p>Every scan is saved to the building's history, so the next one reports the trend. It runs on the building's own box with a local model.</p><div class="fl">Run-series state · local SuperLink + Ollama · federation</div></div>
+    </div>
+  </section>
+</main>
+
+<footer><div class="wrap">Antibody · built on Flower. Sensor readings in this demo are simulated; agent reasoning, ranking and alerts are live.</div></footer>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// Where each problem area sits on the cross-section (viewBox 420x560)
+const SPOTS = {
+  HVAC:[262,44], ENV:[92,168], AIR:[170,132], H2O:[300,236], LIFT:[228,186], WIRE:[150,336],
+  FIRE:[118,386], CYBER:[282,386], ELEC:[160,436], PWR:[286,436], STR:[216,488]
+};
+const INJECTIONS = [
+  {label:"Leak spreads", o:{H2O:{night_flow_lpm_building_empty:14, ceiling_moisture_sensor_4E:"wet on floors 3 and 4", pressure_drop_psi_last_6h:9}}},
+  {label:"Breaker overheats", o:{ELEC:{breaker_temp_c:96}}},
+  {label:"Crack widens", o:{STR:{crack_width_mm_now:0.9, column_tilt_deg:0.08}}},
+  {label:"Battery runaway", o:{PWR:{cell_temp_c_now:55, hydrogen_ppm:900}}},
+  {label:"Sprinkler valve closed", o:{FIRE:{control_valves_open:false, static_pressure_psi:12}}},
+  {label:"Patch the BMS", heal:true, o:{CYBER:{default_admin_password:false, open_ports_to_internet:[], firmware_age_months:1, failed_logins_24h:0}}},
+];
+
+let META = null, runId = null, es = null, t0 = 0, timer = null, alertBuf = "", renderPending = false, nextNew = true;
+const reports = {};
+
+function statusOf(r){
+  if (!r) return "idle";
+  if (r.failed) return "offline";
+  if (r.risk_score >= 0.6) return "infected";
+  if (r.risk_score >= 0.3) return "watch";
+  return "healthy";
+}
+const COLOR = {healthy:"var(--cell)", watch:"var(--watch)", infected:"var(--infect)", scanning:"var(--scan)", offline:"var(--off)", idle:"var(--off)"};
+const LABEL = {healthy:"Healthy", watch:"Watch", infected:"Infected", scanning:"Hunting…", offline:"Offline", idle:"Idle"};
+
+function drawBuilding(){
+  const svg = $("#bldSvg"); let h = "";
+  h += `<rect x="236" y="22" width="56" height="30" rx="4" fill="#121C33" stroke="var(--line-2)"/><text class="lbl" x="296" y="30">ROOF</text>`;
+  for (let f = 0; f < 7; f++){
+    const y = 60 + f*50;
+    h += `<rect class="floor" x="90" y="${y}" width="240" height="50"/>`;
+    for (let w = 0; w < 6; w++) if (w !== 3) h += `<rect class="win" x="${104 + w*36}" y="${y+16}" width="18" height="18" rx="2"/>`;
+    h += `<text class="lbl" x="336" y="${y+30}">F${7-f}</text>`;
+  }
+  h += `<line x1="40" y1="410" x2="380" y2="410" stroke="var(--line-2)" stroke-width="2"/>`;
+  h += `<rect class="floor below" x="90" y="410" width="240" height="50"/><text class="lbl" x="336" y="440">B1</text>`;
+  h += `<rect class="floor below" x="90" y="460" width="240" height="50"/><text class="lbl" x="336" y="490">P1</text>`;
+  h += `<rect x="212" y="60" width="32" height="400" fill="none" stroke="var(--line-2)" stroke-dasharray="3 3"/>`;
+  h += `<line x1="118" y1="60" x2="118" y2="460" stroke="#2A4A7A" stroke-width="3"/>`;
+  h += `<line x1="300" y1="210" x2="300" y2="410" stroke="#1E4E6E" stroke-width="3"/>`;
+  for (const [code,[x,y]] of Object.entries(SPOTS)){
+    h += `<g class="hs" data-code="${code}" data-s="idle" tabindex="0" role="button" aria-label="${code}">
+            <circle class="ring" cx="${x}" cy="${y}" r="9"/><circle class="core" cx="${x}" cy="${y}" r="8"/>
+            <text x="${x+13}" y="${y+4}">${code}</text></g>`;
+  }
+  svg.innerHTML = h;
+  svg.querySelectorAll(".hs").forEach(g => g.addEventListener("click", () => focusCell(g.dataset.code)));
+}
+
+function drawCells(){
+  $("#cells").innerHTML = Object.entries(META.specialists).map(([code, s]) => `
+    <article class="cell" data-code="${code}" data-s="idle">
+      <div class="top"><span class="code">${code}</span><span class="name">${esc(s.name)}</span><span class="rank"></span></div>
+      <div class="state" style="color:var(--off)">Idle</div>
+      <p class="finding">Waiting for a scan.</p>
+      <div class="bar"><i></i></div>
+      <div class="meta"><span class="risk">risk —</span><span class="conf">conf —</span></div>
+      <div class="more"></div>
+    </article>`).join("");
+  document.querySelectorAll(".cell").forEach(c => c.addEventListener("click", () => { c.classList.toggle("open"); highlight(c.dataset.code); }));
+}
+
+function focusCell(code){
+  const c = $(`.cell[data-code="${code}"]`); if (!c) return;
+  c.classList.add("open"); c.scrollIntoView({behavior:"smooth", block:"center"}); highlight(code);
+}
+function highlight(code){
+  document.querySelectorAll(".hs").forEach(g => g.classList.toggle("focus", g.dataset.code === code));
+}
+
+function setArea(code, state, r){
+  const g = $(`.hs[data-code="${code}"]`); if (g) g.dataset.s = state;
+  const c = $(`.cell[data-code="${code}"]`); if (!c) return;
+  c.dataset.s = state;
+  $(".state", c).textContent = LABEL[state]; $(".state", c).style.color = COLOR[state];
+  if (state === "scanning"){ $(".finding", c).textContent = "Examining readings…"; $(".bar i", c).style.width = "0"; $(".risk", c).textContent = "risk —"; $(".conf", c).textContent = "conf —"; $(".rank", c).textContent = ""; $(".more", c).innerHTML = ""; }
+  if (r){
+    $(".finding", c).textContent = r.finding || "No finding";
+    const bar = $(".bar i", c); bar.style.width = Math.round(r.risk_score*100) + "%"; bar.style.background = COLOR[state];
+    $(".risk", c).textContent = "risk " + r.risk_score.toFixed(2);
+    $(".conf", c).textContent = "conf " + r.confidence.toFixed(2);
+    const ev = typeof r.evidence === "string" ? r.evidence : JSON.stringify(r.evidence);
+    const ttf = r.time_to_failure_days == null ? "—" : `${r.time_to_failure_days} days`;
+    $(".more", c).innerHTML = `<p><b>Evidence:</b> ${esc(ev)}</p><p><b>Fix:</b> ${esc(r.recommended_action)}</p><p><b>Time to failure:</b> ${esc(ttf)}</p>`;
+  }
+}
+
+function setHealth(v, final){
+  const off = 389.6 * (1 - v/100);
+  const g = $("#gaugeVal"); g.style.strokeDashoffset = off;
+  g.style.stroke = v >= 80 ? "var(--cell)" : v >= 60 ? "var(--watch)" : "var(--infect)";
+  $("#healthNum").textContent = Math.round(v) + (final ? "" : "");
+}
+function provisionalHealth(){
+  const specs = META.specialists; let tot = 0, w = 0;
+  for (const [code, s] of Object.entries(specs)){ tot += s.consequence; const r = reports[code]; if (r) w += r.risk_score * s.consequence; }
+  return 100 * (1 - w/tot);
+}
+function refreshKpis(){
+  const rs = Object.values(reports);
+  $("#kReported").textContent = `${rs.length}/11`;
+  $("#kInfected").textContent = rs.filter(r => statusOf(r) === "infected").length;
+  $("#kWatch").textContent = rs.filter(r => statusOf(r) === "watch").length;
+}
+
+function feed(text, cls = ""){
+  const li = document.createElement("li");
+  const now = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  li.innerHTML = `<time>${now}</time><span class="${cls}">${esc(text)}</span>`;
+  const f = $("#feed"); f.prepend(li);
+}
+function banner(msg){ const b = $("#banner"); b.textContent = msg || ""; b.classList.toggle("show", !!msg); }
+function busy(on, text){
+  $("#scanBtn").disabled = on; $("#heroScan").disabled = on; $("#stopBtn").hidden = !on;
+  $("#statusLine").textContent = text;
+  clearInterval(timer);
+  if (on){ t0 = Date.now(); timer = setInterval(() => $("#kTime").textContent = Math.round((Date.now()-t0)/1000) + "s", 500); }
+}
+
+function renderAlert(done){
+  renderPending = false;
+  const el = $("#alert");
+  let html = window.marked ? marked.parse(alertBuf) : `<pre>${esc(alertBuf)}</pre>`;
+  if (window.DOMPurify) html = DOMPurify.sanitize(html);
+  el.innerHTML = html + (done ? "" : '<span class="caret"></span>');
+  el.scrollTop = el.scrollHeight;
+}
+
+function overridesSelected(){
+  const o = {};
+  document.querySelectorAll('.chip[aria-pressed="true"]').forEach(ch => {
+    const inj = INJECTIONS[+ch.dataset.i];
+    for (const [k, v] of Object.entries(inj.o)) o[k] = {...(o[k] || {}), ...v};
+  });
+  return o;
+}
+
+const TOOL_GROUP = name => name.startsWith("slack") ? "slack" : name.startsWith("notion") ? "notion" : name;
+const toolCounts = {};
+function resetTools(){
+  for (const k of Object.keys(toolCounts)) delete toolCounts[k];
+  document.querySelectorAll(".tool").forEach(t => { t.classList.remove("used", "err"); $("b", t).textContent = "0"; });
+}
+function onTool(m){
+  const g = TOOL_GROUP(m.name || ""); const t = $(`.tool[data-t="${g}"]`);
+  if (m.status === "called"){
+    toolCounts[g] = (toolCounts[g] || 0) + 1;
+    if (t){ t.classList.add("used", "flash"); $("b", t).textContent = toolCounts[g]; setTimeout(() => t.classList.remove("flash"), 700); }
+    feed(`Coordinator → ${m.name}${m.detail ? ": " + m.detail : ""}`, "t-s");
+  } else if (m.status === "failed"){
+    if (t) t.classList.add("err");
+    feed(`${m.name} unavailable on this SuperLink`, "t-w");
+  }
+}
+function selectedAccounts(){
+  return [...document.querySelectorAll('.chip.acct[aria-pressed="true"]')].map(c => c.dataset.ref);
+}
+
+async function startScan(prompt, newSeries){
+  newSeries = newSeries || nextNew; nextNew = false;
+  if (es) es.close();
+  banner(""); resetTools();
+  for (const k of Object.keys(reports)) delete reports[k];
+  Object.keys(META.specialists).forEach(code => setArea(code, "scanning"));
+  refreshKpis(); setHealth(100); $("#healthNum").textContent = "…";
+  alertBuf = ""; $("#alert").innerHTML = "";
+  const overrides = overridesSelected();
+  busy(true, "Starting Flower run…");
+  feed(Object.keys(overrides).length ? `Injected: ${Object.keys(overrides).join(", ")}` : "Scan requested", "t-s");
+  let res;
+  try{
+    const connectors = selectedAccounts();
+    if (connectors.length) feed(`Binding account connectors: ${connectors.join(", ")}`, "t-s");
+    res = await fetch("/api/scan", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({prompt, overrides, connectors, new_series: newSeries})});
+  }catch(e){ return fail("Backend unreachable: " + e); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return fail(data.detail || `Scan failed (${res.status})`);
+  runId = data.run_id;
+  feed(`Flower run ${runId.slice(-6)} started · 11 agents deployed`, "t-s");
+  busy(true, "Agents hunting…");
+  listen(runId);
+}
+
+function fail(msg){
+  busy(false, "Stopped"); banner(msg); feed(msg, "t-inf");
+  Object.keys(META.specialists).forEach(code => { if (!reports[code]) setArea(code, "idle"); });
+  $("#healthNum").textContent = "—";
+}
+
+function listen(id){
+  es = new EventSource(`/api/runs/${id}/events`);
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.kind === "antibody.agent.report"){
+      const r = m.report; reports[r.subsystem] = r;
+      const s = statusOf(r); setArea(r.subsystem, s, r); refreshKpis(); setHealth(provisionalHealth());
+      feed(`${r.subsystem} agent: ${r.finding} (risk ${r.risk_score.toFixed(2)})`, s === "infected" ? "t-inf" : s === "watch" ? "t-w" : "t-ok");
+    } else if (m.kind === "antibody.tool"){
+      onTool(m);
+    } else if (m.kind === "antibody.scan.ranked"){
+      setHealth(m.health, true);
+      if (m.previous_health != null){
+        const d = m.health - m.previous_health;
+        $("#trend").innerHTML = `Previous scan ${m.previous_health} → now ${m.health} <b class="${d >= 0 ? "up" : "down"}">${d >= 0 ? "+" : ""}${d}</b> (remembered in Flower run-series state)`;
+      } else $("#trend").textContent = "First scan of this session: trend starts on the next scan.";
+      m.ranked.forEach(r => {
+        const c = $(`.cell[data-code="${r.subsystem}"]`);
+        if (c){ c.style.order = r.rank; $(".rank", c).textContent = "#" + r.rank; }
+      });
+      feed(`Coordinator ranked 11 threats · health ${m.health}/100 · top: ${m.ranked[0].subsystem}`, "t-s");
+      busy(true, "Coordinator writing alert…");
+    } else if (m.kind === "response.output_text.delta"){
+      alertBuf += m.delta || "";
+      if (!renderPending){ renderPending = true; requestAnimationFrame(() => renderAlert(false)); }
+    } else if (m.kind === "done"){
+      es.close(); renderAlert(true);
+      const secs = Math.round((Date.now()-t0)/1000);
+      busy(false, `Scan complete in ${secs}s`); $("#kTime").textContent = secs + "s";
+      feed(`Alert delivered in ${secs}s`, "t-ok");
+    } else if (m.kind === "failed"){
+      es.close(); fail((m.raw && (m.raw.message || (m.raw.error && m.raw.error.message))) || "Run failed");
+    }
+  };
+  es.onerror = () => { if (es.readyState === EventSource.CLOSED) return; };
+}
+
+async function stopScan(){
+  if (!runId) return;
+  await fetch(`/api/runs/${runId}/stop`, {method:"POST"}).catch(() => {});
+  if (es) es.close();
+  fail("Scan stopped");
+}
+
+/* ---- network immunity animation ---- */
+const NODES = [
+  {id:"Harbor Point", x:260, y:180, main:true}, {id:"Mercy Hospital", x:90, y:80}, {id:"Bayside Data Ctr", x:430, y:80},
+  {id:"Oak Condos", x:70, y:270}, {id:"Civic Library", x:450, y:275}, {id:"Tech Campus", x:175, y:330}, {id:"Pier Offices", x:350, y:330}
+];
+function drawNet(){
+  const main = NODES[0]; let h = "";
+  NODES.slice(1).forEach(n => h += `<line class="link" x1="${main.x}" y1="${main.y}" x2="${n.x}" y2="${n.y}"/>`);
+  NODES.forEach((n, i) => h += `<g class="node" id="n${i}"><circle class="shield" cx="${n.x}" cy="${n.y}" r="${n.main?34:26}"/>
+     <circle class="b" cx="${n.x}" cy="${n.y}" r="${n.main?26:20}"/>
+     <path d="M${n.x-8} ${n.y+8}v-12h16v12M${n.x-4} ${n.y-1}h2M${n.x+2} ${n.y-1}h2M${n.x-4} ${n.y+4}h2M${n.x+2} ${n.y+4}h2" stroke="var(--ink-2)" stroke-width="1.5" fill="none"/>
+     <text x="${n.x}" y="${n.y + (n.main?46:38)}" text-anchor="middle">${n.id}</text></g>`);
+  h += `<g id="packets"></g>`;
+  $("#netSvg").innerHTML = h;
+}
+async function playNet(){
+  const btn = $("#playNet"); btn.disabled = true; drawNet();
+  const st = $("#netStatus"), sleep = ms => new Promise(r => setTimeout(r, ms));
+  st.textContent = "PWR agent at Harbor Point detects a battery thermal event…";
+  $("#n0").classList.add("sick"); await sleep(1400);
+  st.textContent = "Agents contain it and learn the warning pattern (the antibody).";
+  await sleep(1200);
+  st.textContent = "Flower shares the learned update. Readings stay at Harbor Point.";
+  const main = NODES[0], g = $("#packets");
+  NODES.slice(1).forEach((n, i) => {
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    p.setAttribute("r", 5); p.setAttribute("class", "packet"); g.appendChild(p);
+    const start = performance.now() + i*180, dur = 1100;
+    (function step(t){
+      const k = Math.min(1, Math.max(0, (t - start)/dur));
+      p.setAttribute("cx", main.x + (n.x-main.x)*k); p.setAttribute("cy", main.y + (n.y-main.y)*k);
+      if (k < 1) requestAnimationFrame(step); else { p.remove(); $("#n"+(i+1)).classList.add("immune"); }
+    })(performance.now());
+  });
+  await sleep(2400);
+  $("#n0").classList.remove("sick"); $("#n0").classList.add("immune");
+  st.textContent = "7 of 7 buildings now recognise that failure before it happens.";
+  btn.disabled = false; btn.textContent = "Replay";
+}
+
+/* ---- boot ---- */
+async function boot(){
+  drawBuilding(); drawNet();
+  $("#inject").innerHTML = INJECTIONS.map((x, i) => `<button class="chip${x.heal?" heal":""}" data-i="${i}" aria-pressed="false">${x.heal?"✚ ":"⚠ "}${esc(x.label)}</button>`).join("");
+  document.querySelectorAll(".chip").forEach(ch => ch.addEventListener("click", () => ch.setAttribute("aria-pressed", ch.getAttribute("aria-pressed") === "true" ? "false" : "true")));
+  document.querySelectorAll(".chip.acct").forEach(ch => ch.addEventListener("click", () => ch.setAttribute("aria-pressed", ch.getAttribute("aria-pressed") === "true" ? "false" : "true")));
+  $("#scanBtn").onclick = () => startScan("Check the building.", false);
+  $("#heroScan").onclick = () => { $("#console").scrollIntoView({behavior:"smooth"}); startScan("Check the building.", false); };
+  $("#watchBtn").onclick = () => startScan("Check the building, then keep watching it: schedule a scan every 10 minutes for the next 24 hours (max 144 runs) and alert me on any new infection.", false);
+  $("#newBtn").onclick = () => { $("#trend").textContent = "New session: the next scan starts a fresh run series."; nextNew = true; };
+  $("#stopBtn").onclick = stopScan;
+  $("#playNet").onclick = playNet;
+  $("#askForm").onsubmit = e => { e.preventDefault(); const q = $("#askInput").value.trim(); if (q){ startScan(q, false); $("#askInput").value = ""; } };
+  try{
+    META = await (await fetch("/api/meta")).json();
+  }catch(e){ banner("Backend unreachable. Start server.py."); return; }
+  $("#bldName").textContent = `${META.building.name} · ${META.building.floors} floors · ${META.building.area_sqft.toLocaleString()} sq ft`;
+  drawCells();
+  if (META.error){ $("#connDot").className = "dot bad"; $("#connText").textContent = `${META.superlink} · offline`; banner(META.error); }
+  else { $("#connDot").className = "dot live"; $("#connText").textContent = `Flower · ${META.superlink} · ${META.federation}`; }
+}
+boot();
+</script>
+</body>
+</html>
