@@ -40,16 +40,27 @@ def latest_run() -> tuple[str, bool] | None:
     return run["run-id"], str(run.get("status", "")).startswith("finished")
 
 
-def show(run_id: str, finished: bool) -> None:
-    mode = "--show" if finished else "--stream"
-    print(f"\n=== Governor record, run {run_id} on {SUPERLINK} ({'finished' if finished else 'live'}) ===",
-          flush=True)
+def _print_lines(run_id: str, mode: str) -> int:
     proc = subprocess.Popen([FLWR, "log", run_id, SUPERLINK, mode], env=ENV,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    count = 0
     for line in proc.stdout:
         if "[governor]" in line:
             print(line[line.index("[governor]") + len("[governor] "):].rstrip(), flush=True)
+            count += 1
     proc.wait()
+    return count
+
+
+def show(run_id: str, finished: bool) -> None:
+    print(f"\n=== Governor record, run {run_id} on {SUPERLINK} ({'finished' if finished else 'live'}) ===",
+          flush=True)
+    if finished:
+        _print_lines(run_id, "--show")
+        return
+    # A live hosted log may not carry printed lines until the run ends: read it again then
+    if not _print_lines(run_id, "--stream"):
+        _print_lines(run_id, "--show")
 
 
 def main() -> None:
