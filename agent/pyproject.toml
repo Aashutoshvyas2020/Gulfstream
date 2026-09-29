@@ -19,5 +19,20 @@ fab-format-version = 1
 flwr-version-target = "1.39.0"
 fab-include = ["agent/**/*.py", "LICENSE"]
 
+[tool.flwr.app.config]
+# Scan settings, read by agent_app.configure() from context.run_config. They travel with
+# the app to SuperGrid; ANTIBODY_<NAME> environment variables override them on a local
+# SuperLink (e.g. ANTIBODY_PARALLEL_AGENTS=1 for Ollama, which is automatic).
+parallel-agents = 14
+max-tool-turns = 2
+top-alerts = 2
+investigate = true
+investigate-timeout = 30.0
+alert-timeout = 60.0
+specialist-max-output-tokens = 1000
+alert-max-output-tokens = 1800
+reasoning-effort = "low"
+reassess-after-fix = false
+
 [tool.flwr.app.components]
 agentapp = "agent.agent_app:app"

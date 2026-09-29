@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -343,7 +344,8 @@ class ScanTest(unittest.TestCase):
         model = SlowAlert(risk={"H2O": 0.9}, propose={"H2O": {"tool": "h2o.shut_valve", "reason": "riser leak"}})
         events, _ = scan("Check the building.", state, model)
         text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
-        self.assertTrue(text.startswith("partial "))
+        self.assertTrue(text.startswith("**Building health:"))  # code writes the head at once
+        self.assertIn("partial ", text)
         self.assertIn("**Building health:", text)
         self.assertEqual(text.count("| H2O Pipe leak |"), 1)
         self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("| ") and line[2].isdigit()), 14)
@@ -394,6 +396,85 @@ class ScanTest(unittest.TestCase):
         events, _ = scan("Check the building.", {}, FakeModel(risk={c: 0.6 for c in SPECIALISTS}))
         escalations = [e for e in of_type(events, "antibody.action") if e["action"] == actions.ESCALATE_ID]
         self.assertTrue(any("below 70" in e["detail"] for e in escalations))
+
+
+class SpeedTest(unittest.TestCase):
+    def setUp(self):
+        self._enabled = governance.ENABLED
+        governance.ENABLED = False
+        self._saved = {name: getattr(agent_app, name) for name, _ in agent_app.SETTINGS.values()}
+
+    def tearDown(self):
+        governance.ENABLED = self._enabled
+        for name, value in self._saved.items():
+            setattr(agent_app, name, value)
+        agent_app._UNSUPPORTED.clear()
+
+    def test_settings_come_from_run_config_and_env_overrides_them(self):
+        context = SimpleNamespace(run_config={"parallel-agents": 9, "top-alerts": 1, "investigate": False})
+        env = {"ANTIBODY_TOP_ALERTS": "3"}
+        with unittest.mock.patch.dict(os.environ, env):
+            os.environ.pop("ANTIBODY_MODEL", None)
+            applied = agent_app.configure(context)
+        self.assertEqual(applied["parallel-agents"], 9)
+        self.assertEqual(applied["top-alerts"], 3)  # env wins
+        self.assertIs(applied["investigate"], False)
+
+    def test_pyproject_run_config_matches_the_settings(self):
+        import tomllib
+        config = tomllib.loads((REPO / "agent" / "pyproject.toml").read_text())["tool"]["flwr"]["app"]["config"]
+        self.assertEqual(set(config), set(agent_app.SETTINGS))
+        self.assertEqual(config["parallel-agents"], 14)
+
+    def test_rejected_speed_option_is_dropped_and_retried(self):
+        from openai import BadRequestError
+        import httpx
+        calls = []
+
+        def create(**kw):
+            calls.append(kw)
+            if "reasoning" in kw:
+                raise BadRequestError("Unsupported parameter: reasoning", response=httpx.Response(400, request=httpx.Request("POST", "http://x")), body=None)
+            return "ok"
+
+        client = SimpleNamespace(responses=SimpleNamespace(create=create))
+        self.assertEqual(agent_app.create_response(client, 500, model="m"), "ok")
+        self.assertIn("reasoning", calls[0])
+        self.assertNotIn("reasoning", calls[1])
+        self.assertEqual(calls[1]["max_output_tokens"], 500)
+
+    def test_specialists_ask_for_short_answers(self):
+        model = FakeModel()
+        seen = []
+        original = model.create
+        model.create = lambda **kw: (seen.append(kw), original(**kw))[1]
+        scan("Check the building.", {}, model)
+        specialist = [kw for kw in seen if "tools" not in kw and not kw.get("stream")]
+        self.assertTrue(specialist)
+        self.assertEqual(specialist[0]["max_output_tokens"], agent_app.SPECIALIST_MAX_OUTPUT_TOKENS)
+        self.assertEqual(specialist[0]["reasoning"], {"effort": "low"})
+
+    def test_a_fix_updates_the_report_without_another_model_call(self):
+        model = FakeModel(risk={"HVAC": 0.5}, propose={"HVAC": {"tool": "hvac.reset_damper"}})
+        seen = []
+        original = model.create
+        model.create = lambda **kw: (seen.append(kw), original(**kw))[1]
+        events, _ = scan("Check the building.", {}, model)
+        hvac_calls = [kw for kw in seen if "You are the HVAC agent" in kw.get("instructions", "")]
+        self.assertEqual(len(hvac_calls), 1)
+        report = next(e["report"] for e in of_type(events, "antibody.agent.report") if e["report"]["subsystem"] == "HVAC")
+        self.assertLessEqual(report["risk_score"], 0.1)
+        self.assertIn("Fixed by hvac.reset_damper", report["finding"])
+
+    def test_alert_model_gets_only_the_top_reports(self):
+        model = FakeModel(risk={"H2O": 0.9, "PWR": 0.8, "ELEC": 0.7})
+        events, _ = scan("Check the building.", {}, model)
+        payload = model.inputs[-1]["input"][-1]["content"]
+        data = json.loads(payload.split("\n", 1)[1])
+        ranked = [r["subsystem"] for r in of_type(events, "antibody.scan.ranked")[0]["ranked"]]
+        self.assertEqual([r["subsystem"] for r in data["top_reports"]], ranked[:agent_app.TOP_ALERTS])
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("| ") and line[2].isdigit()), 14)
 
 
 GOVERNOR_SCRIPT = """

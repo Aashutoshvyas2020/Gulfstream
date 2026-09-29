@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from flwr.agentapp import AgentApp, AgentSession
 from flwr.app import ConfigRecord, Context
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 from . import actions, building_domain
 from .building_data import BUILDING, SNAPSHOT
@@ -48,17 +48,29 @@ ASKS_FOR_ACCOUNTS = re.compile(r"\b(slack|notion|tenants?|complaints?|work ?orde
 ASKS_FOR_MONITORING = re.compile(
     r"\b(watch(ing)?|monitor(ing)?|schedule|automation|recurring|every \d+|24/?7|around the clock)\b", re.I
 )
-MAX_TOOL_TURNS = 4
+# Tunable settings. Their defaults for a run come from Flower run config
+# ([tool.flwr.app.config] in pyproject.toml, read from context.run_config), which also
+# reaches SuperGrid runs; ANTIBODY_* environment variables override them on a local
+# SuperLink. configure() applies both at the start of every run.
+MAX_TOOL_TURNS = 2
 # The investigation is best effort: each of its model calls gets this many seconds, and a
 # slow or failed call ends it so the alert still goes out. A call that blocks for about a
 # minute can starve the Flower task heartbeat, and the run is then killed.
-INVESTIGATE_TIMEOUT = float(os.environ.get("ANTIBODY_INVESTIGATE_TIMEOUT", "50"))
-# ANTIBODY_INVESTIGATE=0 skips the connector investigation (demo-safe mode)
-INVESTIGATE = os.environ.get("ANTIBODY_INVESTIGATE", "1") != "0"
+INVESTIGATE_TIMEOUT = 30.0
+# False skips the connector investigation (demo-safe mode)
+INVESTIGATE = True
 # The alert call gets this many seconds (between streamed chunks) before the plain-code
 # alert takes over. Flower's own model timeout is about 5 minutes, and a chat or console
 # connection that hears nothing for that long is dropped.
-ALERT_TIMEOUT = float(os.environ.get("ANTIBODY_ALERT_TIMEOUT", "60"))
+ALERT_TIMEOUT = 60.0
+# Specialists only return a small JSON report: cap their output and ask for low reasoning
+# effort. If the model service rejects either, the call is retried without them.
+SPECIALIST_MAX_OUTPUT_TOKENS = 1000
+REASONING_EFFORT = "low"  # "" sends no reasoning setting
+ALERT_MAX_OUTPUT_TOKENS = 1800
+# After a Tier 1 fix passes its re-check, the report is updated in code; True asks the
+# model to re-assess the area instead (one more call per fixed agent)
+REASSESS_AFTER_FIX = False
 # A small antibody.progress event this often keeps the run's event stream from going quiet
 KEEPALIVE_SECONDS = 15
 EVENT_PROGRESS = "antibody.progress"
@@ -66,10 +78,79 @@ EVENT_PROGRESS = "antibody.progress"
 COORDINATOR_SKIP_FIELDS = {"actions", "held", "changes", "agent_id", "timestamp", "proposed_action"}
 # Specialist calls in flight at once. A local Ollama answers one request at a time, so
 # parallel calls only queue inside the SuperLink, where they can starve the task heartbeat.
-MAX_PARALLEL_AGENTS = int(
-    os.environ.get("ANTIBODY_PARALLEL", "1" if "ANTIBODY_MODEL" in os.environ else "6")
-)
-TOP_ALERTS = 3
+MAX_PARALLEL_AGENTS = 1 if "ANTIBODY_MODEL" in os.environ else 14
+TOP_ALERTS = 2
+
+# run config key -> (module setting, type); env var is ANTIBODY_<KEY with - as _>
+SETTINGS: dict[str, tuple[str, type]] = {
+    "parallel-agents": ("MAX_PARALLEL_AGENTS", int),
+    "max-tool-turns": ("MAX_TOOL_TURNS", int),
+    "top-alerts": ("TOP_ALERTS", int),
+    "investigate": ("INVESTIGATE", bool),
+    "investigate-timeout": ("INVESTIGATE_TIMEOUT", float),
+    "alert-timeout": ("ALERT_TIMEOUT", float),
+    "specialist-max-output-tokens": ("SPECIALIST_MAX_OUTPUT_TOKENS", int),
+    "alert-max-output-tokens": ("ALERT_MAX_OUTPUT_TOKENS", int),
+    "reasoning-effort": ("REASONING_EFFORT", str),
+    "reassess-after-fix": ("REASSESS_AFTER_FIX", bool),
+}
+# Legacy env names kept working
+ENV_ALIASES = {"parallel-agents": "ANTIBODY_PARALLEL"}
+
+
+def _coerce(value: Any, kind: type) -> Any:
+    if kind is bool:
+        return value if isinstance(value, bool) else str(value).strip().lower() not in {"0", "false", "no", "off", ""}
+    return kind(value)
+
+
+def configure(context: Any) -> dict[str, Any]:
+    """Apply run config, then env overrides, to the module settings; return what is in effect.
+
+    A local Ollama (ANTIBODY_MODEL set) keeps one specialist at a time unless the
+    parallel setting is given explicitly in the environment.
+    """
+    run_config = getattr(context, "run_config", None) or {}
+    applied: dict[str, Any] = {}
+    for key, (name, kind) in SETTINGS.items():
+        env = os.environ.get(ENV_ALIASES.get(key, ""), os.environ.get("ANTIBODY_" + key.upper().replace("-", "_")))
+        try:
+            if env is not None:
+                globals()[name] = _coerce(env, kind)
+            elif key in run_config and not (key == "parallel-agents" and "ANTIBODY_MODEL" in os.environ):
+                globals()[name] = _coerce(run_config[key], kind)
+        except (TypeError, ValueError) as exc:
+            log(f"setting {key} ignored: {exc}")
+        applied[key] = globals()[name]
+    return applied
+
+
+_UNSUPPORTED: set[str] = set()  # request options the model service rejected in this run
+
+
+def model_options(max_output_tokens: int) -> dict[str, Any]:
+    """Speed options for a model call, minus any the model service has rejected."""
+    options: dict[str, Any] = {}
+    if max_output_tokens and "max_output_tokens" not in _UNSUPPORTED:
+        options["max_output_tokens"] = max_output_tokens
+    if REASONING_EFFORT and "reasoning" not in _UNSUPPORTED:
+        options["reasoning"] = {"effort": REASONING_EFFORT}
+    return options
+
+
+def create_response(client: OpenAI, max_output_tokens: int, **kwargs: Any) -> Any:
+    """client.responses.create with the speed options; drop an option the service rejects and retry."""
+    for _ in range(3):
+        options = model_options(max_output_tokens)
+        try:
+            return client.responses.create(**kwargs, **options)
+        except BadRequestError as exc:
+            rejected = [o for o in options if o in str(exc)] or list(options)
+            if not options:
+                raise
+            _UNSUPPORTED.update(rejected)
+            log(f"model service rejected {rejected}; retrying without")
+    return client.responses.create(**kwargs)
 MAX_ALERT_MEMORY = 3000  # characters of the previous alert kept in state for follow-ups
 STATE_KEY = "antibody"
 ACTIONS_KEY = "antibody_actions"  # held approvals and the effects of past actions
@@ -95,25 +176,16 @@ You receive the ranked reports from the specialist agents. Before the alert is w
 Request all independent tool calls for a turn together. Stop calling tools once you have what you need."""
 
 COORDINATOR_ANSWER = """You are the coordinator of Antibody, an immune system for buildings: {count} AI agents that each hunt one kind of failure.
-Answer the facility manager's latest message using the scan and the investigation below as evidence. If they asked for a check or a scan, reply in this format:
+The facility manager already sees the building health, the ranked table of all areas, what the agents did and what needs approval; that part is written by code. You write only the part below, from the top reports and investigation results given.
 
-**Building health: <score>/100** (and the change since the previous scan when a history is given)
-
-| Rank | Area | Status | Risk | Action |
-One row per problem area, in the ranked order given, all {count} rows.
+If the facility manager's latest message is a question rather than a request to check the building, first answer it in at most two sentences.
 
 **Top {top} alerts**
-For each: what is wrong, the evidence (sensor readings plus any matching Slack or Notion report), who to call, the fix, the deadline, and the standard cited with a link when one was found.
+For each top report, in the order given, at most four short lines: what is wrong; the evidence (sensor readings plus any matching Slack or Notion result); who to call and the fix, with its deadline; and the standard cited with a link, only if the investigation results include one. If there are no top reports, write one line saying nothing needs urgent attention.
 
-**What the agents did**
-One line per entry in the scan's actions list: fixes made and re-checked, re-checks that failed, escalations, and approved actions carried out. List "advised" entries as recommendations, not as decisions. Omit this section when the list is empty.
+If a start_automation entry is given, add one line: held for approval, or scheduled with when it starts, how often and how many times.
 
-**Needs your approval**
-One line per entry in pending_approvals: its id, the action, the agent, why, and what it will do. End with: Reply "approve <id>" or "reject <id>" (or "approve all"). Omit this section when there are none.
-
-If an automation was scheduled, confirm when it starts, how often it runs and how many times. If it is only held for approval, say so; never say it is running.
-
-Rules: use only the readings, reports and tool results provided; do not invent results. Say plainly that the readings are simulated demo data. Mention any agent that failed or any source you could not reach."""
+Rules: use only what is given; do not invent readings, standards or links. Keep it short."""
 
 
 app = AgentApp()
@@ -168,7 +240,9 @@ def assess(
     spec = SPECIALISTS[code]
     response = record.call(
         f"{code.lower()}.assess",
-        lambda: client.responses.create(
+        lambda: create_response(
+            client,
+            SPECIALIST_MAX_OUTPUT_TOKENS,
             model=MODEL,
             instructions=SPECIALIST_INSTRUCTIONS.format(
                 code=code, count=len(SPECIALISTS), tools=actions.tools_prompt(code), **spec
@@ -229,12 +303,21 @@ def run_specialist(
         done.outcomes += step.outcomes
         done.changes.update(step.changes)
         done.held += step.held
-        if step.fixed or done.changes:
+        if step.fixed and REASSESS_AFTER_FIX:
             # Re-read after a fix: the report describes the area as it is now
             try:
                 parsed = assess(client, record, code, readings, prompt)
             except Exception as exc:
                 log(f"{code} re-assessment after its fix failed, keeping the first report: {exc}")
+        elif step.fixed:
+            # The fix passed its re-check in code: say so without another model call
+            fixed = next(o["action"] for o in step.outcomes if o["status"] == "fixed")
+            parsed = {
+                **parsed,
+                "risk_score": min(clamp01(parsed.get("risk_score")), 0.1),
+                "finding": f"Fixed by {fixed}; re-check passed. Before the fix: {parsed.get('finding', '')}",
+                "time_to_failure_days": None,
+            }
     except Exception as exc:  # one failed agent must not stop the swarm
         return {
             **report,
@@ -455,7 +538,9 @@ def investigate(
     for turn in range(1, MAX_TOOL_TURNS + 1):
         log(f"investigate: turn {turn} model call")
         started = time.monotonic()
-        response = client.responses.create(
+        response = create_response(
+            client,
+            0,
             model=MODEL,
             input=input_items,
             instructions=COORDINATOR_INVESTIGATE.format(count=len(SPECIALISTS), top=TOP_ALERTS),
@@ -547,21 +632,18 @@ def status_of(report: dict[str, Any]) -> str:
     return "Healthy"
 
 
-def fallback_alert(
-    health: int,
-    previous: int | None,
-    ranked: list[dict[str, Any]],
-    outcomes: list[dict[str, Any]],
-    pending: list[dict[str, Any]],
-    reason: str,
-) -> str:
-    """The alert written by plain code from the scan, when the model cannot write it."""
+def top_reports(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The reports the alert explains in words: highest priority, at risk, not failed."""
+    return [r for r in ranked if not r["failed"] and r["risk_score"] >= 0.3][:TOP_ALERTS]
+
+
+def alert_head(health: int, previous: int | None, ranked: list[dict[str, Any]]) -> str:
+    """Health and the ranked table, written by code (instant, and never lost to a model timeout)."""
     change = f" ({health - previous:+d} since the previous scan)" if previous is not None else ""
     lines = [
         f"**Building health: {health}/100**{change}",
         "",
-        f"_The coordinator's model call did not finish ({reason}), so this alert was written by "
-        "plain code from the scan. The readings are simulated demo data._",
+        "_Readings are simulated demo data._",
         "",
         "| Rank | Area | Status | Risk | Action |",
         "| :-- | :-- | :-- | :-- | :-- |",
@@ -569,29 +651,52 @@ def fallback_alert(
     for r in ranked:
         action = " ".join(str(r.get("recommended_action") or r.get("finding") or "").split())[:120]
         lines.append(f"| {r['rank']} | {r['subsystem']} {r['name']} | {status_of(r)} | {r['risk_score']:.2f} | {action} |")
-    top = [r for r in ranked if not r["failed"] and r["risk_score"] >= 0.3][:TOP_ALERTS]
-    if top:
-        lines += ["", f"**Top {len(top)} alert{'s' if len(top) > 1 else ''}**"]
-        for r in top:
-            parts = [f"- **{r['subsystem']} {r['name']}**: {r['finding']}"]
-            if r.get("evidence"):
-                parts.append(f"Evidence: {r['evidence']}")
-            if r.get("recommended_action"):
-                parts.append(f"Fix: {r['recommended_action']}")
-            lines.append(" · ".join(parts))
+    return "\n".join(lines) + "\n\n"
+
+
+def code_top_alerts(top: list[dict[str, Any]]) -> str:
+    """The top alerts written by code, when the model cannot write them."""
+    if not top:
+        return "Nothing needs urgent attention.\n"
+    lines = [f"**Top {len(top)} alert{'s' if len(top) > 1 else ''}**"]
+    for r in top:
+        parts = [f"- **{r['subsystem']} {r['name']}**: {r['finding']}"]
+        if r.get("evidence"):
+            parts.append(f"Evidence: {r['evidence']}")
+        if r.get("recommended_action"):
+            parts.append(f"Fix: {r['recommended_action']}")
+        lines.append(" · ".join(parts))
+    return "\n".join(lines) + "\n"
+
+
+def alert_tail(outcomes: list[dict[str, Any]], pending: list[dict[str, Any]]) -> str:
+    """What the agents did and what needs approval, written by code."""
+    lines: list[str] = []
     if outcomes:
-        lines += ["", "**What the agents did**"]
+        lines += ["**What the agents did**"]
         for o in outcomes:
             extra = f" (attempt {o['attempt']})" if o.get("attempt") else ""
             detail = f": {o['detail']}" if o.get("detail") else ""
             lines.append(f"- {o['agent']} `{o['action']}`: {o['status'].replace('_', ' ')}{extra}{detail}")
     if pending:
-        lines += ["", "**Needs your approval**"]
+        lines += ["", "**Needs your approval**"] if lines else ["**Needs your approval**"]
         for p in pending:
             why = f": {p['reason']}" if p.get("reason") else ""
             lines.append(f"- **{p['id']}** {p['agent']} `{p['action']}`{why}")
         lines.append('Reply "approve <id>" or "reject <id>" (or "approve all").')
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+def investigation_results(input_items: list[dict[str, Any]], limit: int = 1500) -> list[dict[str, Any]]:
+    """Each connector call from the investigation with its (trimmed) result, for the alert."""
+    calls = {i.get("call_id"): i for i in input_items if i.get("type") == "function_call"}
+    results = []
+    for item in input_items:
+        if item.get("type") == "function_call_output" and item.get("call_id") in calls:
+            call = calls[item["call_id"]]
+            results.append({"tool": call.get("name"), "arguments": call.get("arguments"),
+                            "result": str(item.get("output", ""))[:limit]})
+    return results
 
 
 def stream_alert(agent: AgentSession, stream: Any, output_text: list[str] | None = None) -> str:
@@ -674,6 +779,7 @@ def main(agent: AgentSession, context: Context) -> None:
 
 def run_scan(agent: AgentSession, context: Context) -> None:
     """One scan: decide approvals, sense and act, rank, investigate, alert, remember."""
+    log(f"settings: {configure(context)}")
     client = OpenAI(
         base_url=os.environ["FLWR_RUNTIME_BASE_URL"],
         api_key=os.environ["FLWR_RUNTIME_API_KEY"],
@@ -694,6 +800,7 @@ def run_scan(agent: AgentSession, context: Context) -> None:
         run_tag=run_tag,
     )
     outcomes: list[dict[str, Any]] = []
+    notes: list[str] = []  # facts the alert must mention, e.g. an investigation that stopped
 
     def emit_outcome(item: dict[str, Any]) -> None:
         outcomes.append(item)
@@ -811,11 +918,8 @@ def run_scan(agent: AgentSession, context: Context) -> None:
                 investigate(agent, client, input_items, coordinator, hold_connector, connector_refs(prompt))
             except Exception as exc:  # best effort: the alert goes out without it
                 log(f"investigate: stopped ({type(exc).__name__}: {str(exc)[:200]})")
-                input_items.append(
-                    {"type": "message", "role": "user",
-                     "content": "The investigation stopped early (the model service was slow or "
-                     "unreachable), so standards, Slack and Notion could not be checked. Say so in the alert."}
-                )
+                notes.append("The investigation stopped early (the model service was slow or unreachable), "
+                             "so standards, Slack and Notion could not be checked. Say so in one line.")
         else:
             log("investigate: skipped (ANTIBODY_INVESTIGATE=0)")
     finally:
@@ -824,35 +928,56 @@ def run_scan(agent: AgentSession, context: Context) -> None:
     # The funnel: actions -> autonomous fixes -> escalations -> human decisions
     counts = actions.funnel(outcomes, memory["pending"])
     agent.events.emit({"type": EVENT_FUNNEL, **counts, "pending": memory["pending"]})
-    input_items.append(
-        {
-            "type": "message",
-            "role": "user",
-            "content": "Actions and approvals (JSON):\n"
-            + compact({"funnel": counts, "actions": outcomes, "pending_approvals": memory["pending"]}),
-        }
-    )
 
-    # 4. Alert. If the model cannot write it, plain code does, so every scan ends with an answer
-    log("alert: model call")
+    # 4. Alert. Code writes the health, the table, the actions and the approvals; the model
+    # only writes the top alerts, from a small input. If it cannot, code writes those too.
+    top = top_reports(ranked)
+    head = alert_head(health, previous, ranked)
+    tail = alert_tail(outcomes, memory["pending"])
+    agent.events.emit({"type": TEXT_DELTA, "delta": head})
+    automation = [o for o in outcomes if o["action"] == actions.AUTOMATION_TOOL]
+    alert_input: list[dict[str, Any]] = []
+    if memory["last_prompt"] and memory["last_alert"]:
+        alert_input += [
+            {"type": "message", "role": "user", "content": memory["last_prompt"]},
+            {"type": "message", "role": "assistant", "content": memory["last_alert"][:1500]},
+        ]
+    alert_input.append({"type": "message", "role": "user", "content": prompt})
+    alert_input.append({
+        "type": "message",
+        "role": "user",
+        "content": "Top reports and investigation (JSON):\n" + compact({
+            "top_reports": [{k: v for k, v in r.items() if k not in COORDINATOR_SKIP_FIELDS} for r in top],
+            "investigation_results": investigation_results(input_items),
+            "notes": notes,
+            "start_automation": automation,
+        }),
+    })
+    log(f"alert: model call ({len(top)} top reports)")
     streamed: list[str] = []
     try:
-        stream = client.responses.create(
+        stream = create_response(
+            client,
+            ALERT_MAX_OUTPUT_TOKENS,
             model=MODEL,
-            input=input_items,
-            instructions=COORDINATOR_ANSWER.format(count=len(SPECIALISTS), top=TOP_ALERTS),
+            input=alert_input,
+            instructions=COORDINATOR_ANSWER.format(count=len(SPECIALISTS), top=len(top) or TOP_ALERTS),
             stream=True,
             timeout=ALERT_TIMEOUT,
         )
-        alert = stream_alert(agent, stream, streamed)
-        log(f"alert: done, {len(alert)} characters")
+        middle = stream_alert(agent, stream, streamed)
+        log(f"alert: done, {len(middle)} characters from the model")
     except Exception as exc:
         reason = "the model service timed out" if "timeout" in str(exc).lower() else type(exc).__name__
-        log(f"alert: model failed ({str(exc)[:200]}), writing the fallback alert")
-        text = fallback_alert(health, previous, ranked, outcomes, memory["pending"], reason)
-        if streamed:
-            text = "\n\n---\n\n" + text
-        agent.events.emit({"type": TEXT_DELTA, "delta": text})
-        alert = "".join(streamed) + text
+        log(f"alert: model failed ({str(exc)[:200]}), code writes the top alerts")
+        extra = ("\n\n" if streamed else "") + (
+            f"_The coordinator's model call did not finish ({reason}), so these alerts were "
+            "written by plain code from the scan._\n\n") + code_top_alerts(top)
+        agent.events.emit({"type": TEXT_DELTA, "delta": extra})
+        middle = "".join(streamed) + extra
+    closing = ("\n\n" + tail) if tail else ""
+    if closing:
+        agent.events.emit({"type": TEXT_DELTA, "delta": closing})
+    alert = head + middle + closing
     save_memory(context, memory, health, ranked[0]["subsystem"], prompt, alert)
     print(alert)
