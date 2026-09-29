@@ -31,7 +31,7 @@ from openai import OpenAI
 
 from . import actions, building_domain
 from .building_data import BUILDING, SNAPSHOT
-from .governance import AgentRecord, approved_record
+from .governance import AgentRecord, approved_record, pane_line, summaries
 from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
 
 # Flower's own Endeavor model via the Flower Runtime; set ANTIBODY_MODEL to run on a local model, e.g. gemma4:latest
@@ -67,6 +67,7 @@ EVENT_SCAN_RANKED = "antibody.scan.ranked"
 EVENT_TOOL = "antibody.tool"
 EVENT_ACTION = "antibody.action"
 EVENT_FUNNEL = "antibody.scan.funnel"
+EVENT_GOVERNANCE = "antibody.governance"  # one per Governor session: what its record says
 TEXT_DELTA = "response.output_text.delta"
 EMIT_INTERVAL = 0.5  # seconds between batched text events
 
@@ -754,6 +755,14 @@ def main(agent: AgentSession, context: Context) -> None:
             log("investigate: skipped (ANTIBODY_INVESTIGATE=0)")
     finally:
         coordinator.close()
+
+    # Governor: what each agent's record says, as run events and [governor] log lines,
+    # so records written on a hosted SuperGrid machine can still be shown to the operator
+    for summary in summaries():
+        agent.events.emit({"type": EVENT_GOVERNANCE, **summary})
+        line = pane_line(summary)
+        if line:
+            print(line, flush=True)
 
     # The funnel: actions -> autonomous fixes -> escalations -> human decisions
     counts = actions.funnel(outcomes, memory["pending"])

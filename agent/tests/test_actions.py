@@ -427,6 +427,31 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual(claim("t-antibody-h2o-approved-A1.jsonl"), "approved by Dana (A1)")
         self.assertEqual(tools("t-antibody-h2o-approved-A1.jsonl"), ["h2o.shut_valve"])
 
+    def test_closed_sessions_summarise_their_record_for_the_governor_pane(self):
+        if not governance.ENABLED:
+            self.skipTest("Sentience Governor not installed")
+        script = APPROVAL_SCRIPT.replace(
+            "print(json.dumps(",
+            "from agent.governance import summaries, pane_line\n"
+            "print(json.dumps([dict(s, line=pane_line(s)) for s in summaries()]))\n#",
+        )
+        with tempfile.TemporaryDirectory() as home:
+            shutil.copytree(REPO / "governance" / "profiles", Path(home, ".sentience", "profiles"))
+            shutil.copy(REPO / "governance" / "resolution.yaml", Path(home, ".sentience"))
+            env = {**os.environ, "HOME": home, "ANTIBODY_TRACE_DIR": str(Path(home, "traces"))}
+            out = subprocess.run(
+                [sys.executable, "-c", script], env=env, cwd=REPO / "agent",
+                capture_output=True, text=True, check=True,
+            ).stdout
+        held, approved = json.loads(out.strip().splitlines()[-1])
+        self.assertEqual(held["agent"], "antibody-h2o")
+        self.assertIsNone(held["approval"])
+        self.assertEqual(held["actions"][0]["tool"], "h2o.shut_valve")
+        self.assertIn("HIGH_CONSEQUENCE_DETECTED", held["actions"][0]["flags"])
+        self.assertNotIn("POL-003", held["line"])  # noise omitted
+        self.assertEqual(approved["approval"], "approved by Dana (A1)")
+        self.assertIn("approved by Dana (A1)", approved["line"])
+
 
 if __name__ == "__main__":
     unittest.main()
