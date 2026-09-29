@@ -171,6 +171,7 @@ Mitigations in `agent/agent/agent_app.py` (not verified on SuperGrid yet):
 - Every step writes a timestamped line to the run log (`[HH:MM:SS] investigate: turn 1 model call`), so `flwr log <run-id> supergrid --show` shows where a killed run stopped.
 - The investigation is best effort: each of its model calls times out after `ANTIBODY_INVESTIGATE_TIMEOUT` seconds (default 50), and a slow or failed call ends it; the alert still goes out and says what could not be checked.
 - The coordinator's requests are compact JSON without the fields it does not use.
+- If the alert's model call fails too (SuperGrid run `7689180499312021667`: `model_response_timeout` from Flower's model service), plain code writes the alert from the scan: health, the ranked table, what the agents did and what needs approval. Every scan ends with an answer.
 - `ANTIBODY_INVESTIGATE=0` skips the investigation (demo-safe mode).
 - These settings are read where the app runs: set them on a local SuperLink's shell. On SuperGrid the defaults apply.
 

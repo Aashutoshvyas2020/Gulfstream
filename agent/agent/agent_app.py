@@ -507,14 +507,76 @@ def run_approved_connector(
                            detail=call["arguments"], **base)
 
 
-def stream_alert(agent: AgentSession, stream: Any) -> str:
+def status_of(report: dict[str, Any]) -> str:
+    """Same thresholds as the console's statusOf()."""
+    if report["failed"]:
+        return "Offline"
+    if report["risk_score"] >= 0.6:
+        return "Infected"
+    if report["risk_score"] >= 0.3:
+        return "Watch"
+    return "Healthy"
+
+
+def fallback_alert(
+    health: int,
+    previous: int | None,
+    ranked: list[dict[str, Any]],
+    outcomes: list[dict[str, Any]],
+    pending: list[dict[str, Any]],
+    reason: str,
+) -> str:
+    """The alert written by plain code from the scan, when the model cannot write it."""
+    change = f" ({health - previous:+d} since the previous scan)" if previous is not None else ""
+    lines = [
+        f"**Building health: {health}/100**{change}",
+        "",
+        f"_The coordinator's model call did not finish ({reason}), so this alert was written by "
+        "plain code from the scan. The readings are simulated demo data._",
+        "",
+        "| Rank | Area | Status | Risk | Action |",
+        "| :-- | :-- | :-- | :-- | :-- |",
+    ]
+    for r in ranked:
+        action = " ".join(str(r.get("recommended_action") or r.get("finding") or "").split())[:120]
+        lines.append(f"| {r['rank']} | {r['subsystem']} {r['name']} | {status_of(r)} | {r['risk_score']:.2f} | {action} |")
+    top = [r for r in ranked if not r["failed"] and r["risk_score"] >= 0.3][:TOP_ALERTS]
+    if top:
+        lines += ["", f"**Top {len(top)} alert{'s' if len(top) > 1 else ''}**"]
+        for r in top:
+            parts = [f"- **{r['subsystem']} {r['name']}**: {r['finding']}"]
+            if r.get("evidence"):
+                parts.append(f"Evidence: {r['evidence']}")
+            if r.get("recommended_action"):
+                parts.append(f"Fix: {r['recommended_action']}")
+            lines.append(" · ".join(parts))
+    if outcomes:
+        lines += ["", "**What the agents did**"]
+        for o in outcomes:
+            extra = f" (attempt {o['attempt']})" if o.get("attempt") else ""
+            detail = f": {o['detail']}" if o.get("detail") else ""
+            lines.append(f"- {o['agent']} `{o['action']}`: {o['status'].replace('_', ' ')}{extra}{detail}")
+    if pending:
+        lines += ["", "**Needs your approval**"]
+        for p in pending:
+            why = f": {p['reason']}" if p.get("reason") else ""
+            lines.append(f"- **{p['id']}** {p['agent']} `{p['action']}`{why}")
+        lines.append('Reply "approve <id>" or "reject <id>" (or "approve all").')
+    return "\n".join(lines) + "\n"
+
+
+def stream_alert(agent: AgentSession, stream: Any, output_text: list[str] | None = None) -> str:
     """Relay the alert to the frontend in text chunks and return the full text.
+
+    `output_text` collects the text as it streams, so a caller still has what was sent
+    if the stream fails part way.
 
     Emitting every token as its own run event means over a thousand writes to the
     SuperLink per alert, which can starve the task heartbeat. Text deltas are batched
     every EMIT_INTERVAL seconds and hidden reasoning deltas are not relayed.
     """
-    output_text: list[str] = []
+    if output_text is None:
+        output_text = []
     pending: list[str] = []
     last_flush = time.monotonic()
 
@@ -694,15 +756,25 @@ def main(agent: AgentSession, context: Context) -> None:
         }
     )
 
-    # 4. Alert
+    # 4. Alert. If the model cannot write it, plain code does, so every scan ends with an answer
     log("alert: model call")
-    stream = client.responses.create(
-        model=MODEL,
-        input=input_items,
-        instructions=COORDINATOR_ANSWER.format(count=len(SPECIALISTS), top=TOP_ALERTS),
-        stream=True,
-    )
-    alert = stream_alert(agent, stream)
-    log(f"alert: done, {len(alert)} characters")
+    streamed: list[str] = []
+    try:
+        stream = client.responses.create(
+            model=MODEL,
+            input=input_items,
+            instructions=COORDINATOR_ANSWER.format(count=len(SPECIALISTS), top=TOP_ALERTS),
+            stream=True,
+        )
+        alert = stream_alert(agent, stream, streamed)
+        log(f"alert: done, {len(alert)} characters")
+    except Exception as exc:
+        reason = "the model service timed out" if "timeout" in str(exc).lower() else type(exc).__name__
+        log(f"alert: model failed ({str(exc)[:200]}), writing the fallback alert")
+        text = fallback_alert(health, previous, ranked, outcomes, memory["pending"], reason)
+        if streamed:
+            text = "\n\n---\n\n" + text
+        agent.events.emit({"type": TEXT_DELTA, "delta": text})
+        alert = "".join(streamed) + text
     save_memory(context, memory, health, ranked[0]["subsystem"], prompt, alert)
     print(alert)
