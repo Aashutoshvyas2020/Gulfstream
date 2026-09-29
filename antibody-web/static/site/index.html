@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Antibody</title>
+<meta name="description" content="Antibody: an immune system for buildings. 11 AI agents on Flower hunt building failures, rank what to fix first and keep building data on site.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/site/css/site.css">
+</head>
+<body>
+
+<canvas id="scene" aria-hidden="true"></canvas>
+<div class="labels" id="labels" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="top">
+  <a class="brand" href="#hero" data-go="hero" aria-label="Antibody, back to top">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 30V17M16 17 7 8M16 17l9-9M7 8 4 5M7 8l-3 3M25 8l3-3M25 8l3 3"/></svg>
+    Antibody
+  </a>
+  <nav aria-label="Chapters">
+    <a href="#threats" data-go="threats">Threats</a>
+    <a href="#hunt" data-go="hunt">Hunt</a>
+    <a href="#respond" data-go="respond">Respond</a>
+    <a href="#network" data-go="network">Network</a>
+    <a href="#flower" data-go="flower">Flower</a>
+  </nav>
+  <a class="btn primary sm" href="#live" data-go="live">Live scan</a>
+</header>
+
+<aside class="hud" id="hud" data-state="unmonitored" aria-live="polite">
+  <svg viewBox="0 0 64 64" aria-hidden="true"><circle class="track" cx="32" cy="32" r="28"/><circle class="val" id="hudRing" cx="32" cy="32" r="28"/></svg>
+  <div>
+    <div class="hud-num"><b id="hudNum">—</b><span>/100</span></div>
+    <div class="hud-state" id="hudState">Unmonitored</div>
+    <div class="hud-src" id="hudSrc">Scripted story</div>
+  </div>
+</aside>
+
+<main>
+  <section class="ch hero" id="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">An immune system for buildings</p>
+      <h1>Buildings get sick.<br><em>Antibody</em> fights back.</h1>
+      <p class="lede">11 AI agents watch a building's power, wiring, water, structure and air around the clock. They catch the infection early, rank what to fix first, and keep every reading inside the building.</p>
+      <div class="ctas">
+        <a class="btn primary" href="#threats" data-go="threats">See how it works</a>
+        <a class="btn" href="#live" data-go="live">Run a live scan</a>
+      </div>
+      <p class="demo-note">Demo building modelled on Stanford's Hoover Tower. Readings are simulated.</p>
+      <dl class="facts">
+        <div><dt>11</dt><dd>specialist agents</dd></div>
+        <div><dt>1</dt><dd>coordinator</dd></div>
+        <div><dt>0</dt><dd>readings leave the site</dd></div>
+      </dl>
+    </div>
+    <div class="scroll-cue" aria-hidden="true"><span></span>Scroll</div>
+  </section>
+
+  <section class="ch" id="threats">
+    <div class="card">
+      <p class="eyebrow">01 · Threats</p>
+      <h2>Eleven ways a building fails quietly.</h2>
+      <p>Most failures give a warning weeks ahead: a battery that runs warm, water moving at 2 a.m., a crack that grows a little every month. A yearly inspection sees one moment. Antibody watches every few minutes.</p>
+      <ul class="threats" id="threatList">
+        <li data-s="idle"><i></i><b>PWR</b>Battery bank<span>Thermal runaway</span></li>
+        <li data-s="idle"><i></i><b>ELEC</b>Switchgear<span>Hot breaker</span></li>
+        <li data-s="idle"><i></i><b>WIRE</b>Wall wiring<span>Hidden arcing</span></li>
+        <li data-s="idle"><i></i><b>FIRE</b>Sprinkler riser<span>Closed valve</span></li>
+        <li data-s="idle"><i></i><b>STR</b>Concrete column<span>Growing crack</span></li>
+        <li data-s="idle"><i></i><b>LIFT</b>Elevator<span>Door faults</span></li>
+        <li data-s="idle"><i></i><b>HVAC</b>Rooftop chiller<span>Efficiency loss</span></li>
+        <li data-s="idle"><i></i><b>H2O</b>Pipe leak<span>Night flow</span></li>
+        <li data-s="idle"><i></i><b>ENV</b>Facade<span>Rain intrusion</span></li>
+        <li data-s="idle"><i></i><b>AIR</b>Air quality<span>CO₂, VOCs</span></li>
+        <li data-s="idle"><i></i><b>CYBER</b>BMS controller<span>Open port</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="ch" id="hunt">
+    <div class="card">
+      <p class="eyebrow">02 · Hunt</p>
+      <h2>Eleven hunters. One coordinator.</h2>
+      <p>Each agent is a specialist: an electrical engineer for the switchgear, a plumber for leaks, a security analyst for the control system. It reads its own sensors and files a report with a risk, the evidence and a fix.</p>
+      <div class="formula">
+        <code>priority = risk × consequence × urgency</code>
+        <p>The coordinator ranks every report in plain code, not by gut feel, so every decision can be audited.</p>
+      </div>
+      <ol class="rank">
+        <li><b>CYBER</b><span>Default password, port open to the internet</span><em class="c-inf">0.95</em></li>
+        <li><b>H2O</b><span>6.5 L/min flowing with the building empty</span><em class="c-inf">0.90</em></li>
+        <li><b>PWR</b><span>Cells at 41 °C, exhaust fan faulting</span><em class="c-inf">0.85</em></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="ch" id="respond">
+    <div class="card">
+      <p class="eyebrow">03 · Respond</p>
+      <h2>Fix the small things. Ask a human for the big ones.</h2>
+      <p>The coordinator cites the governing standard, checks Slack for tenant reports and Notion for open work orders, then acts by tier.</p>
+      <ol class="tiers">
+        <li><b>Tier 0</b><span>Cleanup</span><em>Stale alerts, duplicate work orders. Bots only.</em></li>
+        <li><b>Tier 1</b><span>Self-correct</span><em>Reset a damper and re-check. Two tries, then escalate.</em></li>
+        <li><b>Tier 2</b><span>Escalate</span><em>Health below 70 or a failed fix alerts a person.</em></li>
+        <li class="t3"><b>Tier 3</b><span>Human approval</span><em>Shut a valve, trip a breaker, any control-system change.</em></li>
+      </ol>
+      <figure class="alert-card">
+        <figcaption><i></i>H2O · Tower, F6 east riser</figcaption>
+        <p>6.5 L/min at 2 a.m. (normal 0.3). Ceiling sensor on F5 wet since 01:20.</p>
+        <p><b>Proposed:</b> close the F6 riser valve · <b>Call:</b> plumber · <b>Tier 3</b>, waiting for approval</p>
+      </figure>
+    </div>
+  </section>
+
+  <section class="ch" id="network">
+    <div class="card">
+      <p class="eyebrow">04 · Network immunity</p>
+      <h2>One building gets sick. Every building gets immune.</h2>
+      <p>Picture a whole campus on Antibody. Every building runs its own copy on its own hardware. When one beats a failure, it shares what it learned, never the data behind it.</p>
+      <div class="split">
+        <div><span class="pill">Stays home</span><p>Sensor streams, camera frames, floor plans, control-system details.</p></div>
+        <div><span class="pill ok">Travels</span><p>The lesson: "this battery model with this temperature curve failed next."</p></div>
+      </div>
+      <p class="note">Roadmap: buildings as Flower SuperNodes, lessons sent with <code>agent.grid</code>. Illustrated here.</p>
+    </div>
+  </section>
+
+  <section class="ch live" id="live">
+    <div class="live-head">
+      <p class="eyebrow">05 · Live</p>
+      <h2>Run it for real.</h2>
+      <p>This starts a real run on Flower SuperGrid: 11 agents in parallel, then the coordinator ranks, searches the web for the governing standards and writes the alert. About two to three minutes. Readings are simulated; everything the agents do is real.</p>
+    </div>
+    <div class="panel" id="livePanel"></div>
+  </section>
+
+  <section class="ch" id="flower">
+    <div class="card wide">
+      <p class="eyebrow">06 · Built on Flower</p>
+      <h2>Why this needs Flower.</h2>
+      <div class="features">
+        <div><b>AgentApp</b><p>11 specialists and a coordinator in one Flower app.</p></div>
+        <div><b>Connectors</b><p><code>web_search</code>, <code>web_fetch</code>, Slack and Notion for evidence.</p></div>
+        <div><b>Automations</b><p><code>start_automation</code> keeps the 24/7 watch running.</p></div>
+        <div><b>Run-series state</b><p>Health history and follow-ups live in <code>context.state</code>.</p></div>
+        <div><b>SuperGrid or on-site</b><p>Runs on Flower SuperGrid, or on a local SuperLink with a local model so the data never leaves the building.</p></div>
+        <div><b>Grid</b><p>Next: <code>agent.grid</code> to share lessons between buildings.</p></div>
+      </div>
+      <p class="who">For facility managers, building owners, hospitals, data centers, campuses and insurers.</p>
+    </div>
+  </section>
+</main>
+
+<footer>Antibody · built on Flower. Sensor readings in this demo are simulated; agent runs are real.</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script type="module" src="/static/site/js/story.js"></script>
+<script type="module" src="/static/site/js/scene.js"></script>
+<script type="module" src="/static/site/js/live/panel.js"></script>
+</body>
+</html>
