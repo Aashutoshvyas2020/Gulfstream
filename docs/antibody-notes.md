@@ -1,6 +1,6 @@
 # Antibody: Flower and Sentience Governor notes
 
-> 2026-09-29. **Antibody is a placeholder name.** It replaces Continuity as the hackathon project; the Continuity docs stay in this folder as history.
+> 2026-09-29. **Antibody is a placeholder name.**
 >
 > This file covers:
 > - the human-supervision model;

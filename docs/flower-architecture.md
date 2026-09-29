@@ -1,6 +1,6 @@
 # Flower: what we verified from primary sources
 
-> Extracted from the [idea register](idea-register.md), 2026-09-28/29. Flower Agent is marked experimental by Flower; re-check against current docs.
+> Verified from Flower's docs, 2026-09-28/29. Flower Agent is marked experimental by Flower; re-check against current docs.
 
 ## What Flower Agent gives us (docs as of flwr 1.38/1.39)
 
@@ -15,7 +15,7 @@
 - **Connectors are read-only.**
   - Built-in: `web_search`, `web_fetch`, `start_automation`.
   - Account-based (read): Slack, Notion, GitHub, Attio.
-  - Any "write", "refund" or "send externally" action must be a **simulated tool we build**.
+  - Any write action (e.g. dispatching a contractor, messaging tenants) must be a **simulated tool we build**.
 - **FAB limit.** A FAB holds either one `agentapp` or a `serverapp`/`clientapp` pair, never both.
 
 ## Flower deployment architecture
@@ -72,15 +72,13 @@ From Flower's framework docs:
 - **Differential privacy mods.**
 - **Content-addressable messaging.** Flower's enterprise material claims verifiable audit logging down to each message.
 
-## Sources (including the idea register's)
+## Sources
 
 - Luma event page: https://luma.com/flwrlabs-bamu
 - Flower Discuss, Stanford 2026 details: https://discuss.flower.ai/t/collaborative-agent-hackathon-stanford-ca-2026/1275
 - Flower Agent docs: https://flower.ai/docs/agent/ (AgentApp runtime, connectors, agents and federations)
 - Grid messaging tools: flwrlabs/flower PR #8143; node-role scoping: PR #8209
 - Endeavor 1.0: https://flower.ai/blog/2026-09-01-introducing-endeavor-1.0
-- PreventNet-Flower (prior art): https://github.com/NishankKS/PreventNet-Flower
-- Sentience Governor README and `docs/profile.md` (public repo, 0.3.2.1)
 - Flower architecture: https://flower.ai/docs/framework/explanation-flower-architecture.html
 - Network communication: https://flower.ai/docs/framework/ref-flower-network-communication.html
 - Mods: https://flower.ai/docs/framework/how-to-use-built-in-mods.html
