@@ -74,6 +74,8 @@ REASSESS_AFTER_FIX = False
 # A small antibody.progress event this often keeps the run's event stream from going quiet
 KEEPALIVE_SECONDS = 15
 EVENT_PROGRESS = "antibody.progress"
+# Model stream events that end a response; stream_alert never relays them
+MODEL_END_EVENTS = {"response.completed", "response.incomplete", "response.failed", "error"}
 # Report fields the coordinator does not need; left out to keep its model calls small
 COORDINATOR_SKIP_FIELDS = {"actions", "held", "changes", "agent_id", "timestamp", "proposed_action"}
 # Specialist calls in flight at once. A local Ollama answers one request at a time, so
@@ -731,9 +733,14 @@ def stream_alert(agent: AgentSession, stream: Any, output_text: list[str] | None
         if event.type.startswith("response.reasoning"):
             continue
         flush()
-        agent.events.emit(event.to_dict())
-        if event.type in {"error", "response.failed", "response.incomplete"}:
+        if event.type in MODEL_END_EVENTS:
+            # Not relayed: the chat CLI and the console end the response on these, and the
+            # alert still has code-written parts to come. run_scan sends the one final
+            # response.completed; a failure falls back to the code-written alert.
+            if event.type == "response.completed":
+                continue
             raise RuntimeError(f"Model response did not complete: {event}")
+        agent.events.emit(event.to_dict())
     flush()
     return "".join(output_text)
 
@@ -979,5 +986,7 @@ def run_scan(agent: AgentSession, context: Context) -> None:
     if closing:
         agent.events.emit({"type": TEXT_DELTA, "delta": closing})
     alert = head + middle + closing
+    # The one terminal event: flwr chat and the console show the alert as complete on it
+    agent.events.emit({"type": "response.completed", "response": {"status": "completed"}})
     save_memory(context, memory, health, ranked[0]["subsystem"], prompt, alert)
     print(alert)

@@ -353,6 +353,21 @@ class ScanTest(unittest.TestCase):
         self.assertIn("h2o.shut_valve", text)
         self.assertIn("approve", state[agent_app.STATE_KEY]["last_alert"])  # remembered for follow-ups
 
+    def test_every_scan_ends_with_exactly_one_completed_event_and_no_error(self):
+        class SlowAlert(FakeModel):
+            def create(self, **kw):
+                if kw.get("stream"):
+                    return iter([SimpleNamespace(type="response.output_text.delta", delta="partial "),
+                                 SimpleNamespace(type="error", to_dict=lambda: {"type": "error"})])
+                return super().create(**kw)
+
+        for model in (FakeModel(), SlowAlert()):
+            events, _ = scan("Check the building.", {}, model)
+            kinds = [e["type"] for e in events]
+            self.assertEqual(kinds.count("response.completed"), 1)
+            self.assertEqual(kinds[-1], "response.completed")  # after the approvals text
+            self.assertNotIn("error", kinds)
+
     def test_alert_falls_back_when_the_call_itself_fails(self):
         class DownAlert(FakeModel):
             def create(self, **kw):
