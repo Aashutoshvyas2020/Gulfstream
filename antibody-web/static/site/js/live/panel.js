@@ -56,6 +56,12 @@ root.innerHTML = `
       <h4>The ${CODES.length} agents</h4>
       <div class="agents" id="lpAgents"></div>
     </div>
+    <div class="lp-col lp-wide lp-gov">
+      <h4>Actions &amp; approvals <span class="gov-tag" title="Every action below is also recorded by Sentience Governor, independently of this app">Sentience Governor</span></h4>
+      <p class="gov-funnel" id="lpFunnel">Fixes, escalations and actions waiting for a human appear here as the agents act. Governor records and flags each one.</p>
+      <div class="gov-pending" id="lpPending"></div>
+      <ol class="gov-list" id="lpGov"><li class="empty">No actions yet.</li></ol>
+    </div>
     <div class="lp-col lp-wide">
       <h4>Coordinator alert</h4>
       <div class="alert" id="lpAlert"></div>
@@ -67,13 +73,15 @@ root.innerHTML = `
 
 let META = null, runId = null, closeStream = null, t0 = 0, timer = null, alertBuf = "", renderPending = false, nextNew = true;
 const reports = {}, toolCounts = {}, sources = new Map();
+// Sentience Governor: what each agent's record says (antibody.governance), and the app's actions
+let govBy = {}, acts = [], pending = [];
 
 function showError(msg) { const e = $("#lpErr"); e.textContent = msg || ""; e.classList.toggle("show", !!msg); }
 
 function drawAgents() {
   $("#lpAgents").innerHTML = CODES.map(c => `
     <div class="agent" data-code="${c}" data-s="idle">
-      <span class="code">${c}</span><span class="name">${esc(META ? META.specialists[c].name : c)}</span><span class="state">Idle</span>
+      <span class="code">${c}</span><span class="name">${esc(META ? META.specialists[c].name : c)}</span><span class="state">Idle</span><span class="gov" title="Sentience Governor record for this agent"></span>
       <div class="bar"><i></i></div><p class="finding"></p><div class="more"></div>
     </div>`).join("");
   root.querySelectorAll(".agent").forEach(el => el.addEventListener("click", () => el.classList.toggle("open")));
@@ -156,9 +164,80 @@ function onTool(m) {
 }
 function fail(msg) { busy(false); showError(msg); CODES.forEach(c => { if (!reports[c]) setAgent(c, "idle"); }); }
 
+const agentId = code => `antibody-${String(code).toLowerCase()}`;
+const FLAG_LABEL = { HIGH_CONSEQUENCE_DETECTED: "high-consequence", SCOPE_INTENT_MISMATCH: "outside its lane",
+  TASK_BOUNDARY_CROSSED: "scan → fix", SCOPE_OPERATION_UNEXPECTED: "no declared intent", "POL-001": "undeclared" };
+const STATUS_LABEL = { done: "done", fixed: "fixed", recheck_failed: "re-check failed", escalated: "escalated",
+  refused: "refused", held: "held for a human", executed: "executed", rejected: "rejected", failed: "failed" };
+// Flags that deserve attention; "scan → fix" (TASK_BOUNDARY_CROSSED) is normal for a fix
+const CONCERN = ["HIGH_CONSEQUENCE_DETECTED", "SCOPE_INTENT_MISMATCH", "POL-001", "SCOPE_OPERATION_UNEXPECTED"];
+const TIER_LABEL = ["Tier 0 · cleanup", "Tier 1 · self-fix", "Tier 2 · escalate", "Tier 3 · approval"];
+
+// What Governor recorded for one app action, or null if its record has not arrived yet
+function governorFor(a) {
+  // coordinator.* actions (escalations) are recorded in the coordinator's session
+  const sessions = govBy[a.action.startsWith("coordinator.") ? "antibody-coordinator" : agentId(a.agent)] || [];
+  const tagged = a.status === "executed" && a.approval_id
+    ? sessions.filter(s => (s.approval || "").includes(`(${a.approval_id})`)) : sessions.filter(s => !s.approval);
+  for (const s of tagged.length ? tagged : sessions)
+    for (const x of s.actions) if (x.tool === a.action) return { ...x, approval: s.approval };
+  return null;
+}
+function govBadge(g) {
+  if (!g) return `<span class="gb wait">Governor: recording…</span>`;
+  const flags = [...new Set(g.flags.map(f => FLAG_LABEL[f] || f))];
+  const warn = g.flags.some(f => f === "SCOPE_INTENT_MISMATCH" || f === "POL-001" || f === "SCOPE_OPERATION_UNEXPECTED");
+  const hc = g.flags.includes("HIGH_CONSEQUENCE_DETECTED");
+  return `<span class="gb ${warn ? "bad" : hc ? "hc" : "ok"}">Governor · ${esc(g.operation || "?")}${flags.length ? " · " + esc(flags.join(", ")) : " · in lane"}</span>`
+    + (g.approval ? `<span class="gb appr">${esc(g.approval)}</span>` : "");
+}
+function renderGov() {
+  const list = $("#lpGov");
+  list.innerHTML = acts.length ? acts.map(a => `
+    <li class="ga s-${esc(a.status)}"><div class="ga-top"><b>${esc(a.agent)}</b><code>${esc(a.action)}</code>
+      <span class="ga-st">${esc(STATUS_LABEL[a.status] || a.status)}${a.approval_id ? " · " + esc(a.approval_id) : ""}</span></div>
+      <div class="ga-meta"><span class="tier">${esc(TIER_LABEL[a.tier] || "")}</span>${govBadge(governorFor(a))}</div>
+      ${a.reason || a.detail ? `<p>${esc(a.reason || a.detail)}</p>` : ""}</li>`).join("")
+    : '<li class="empty">No actions yet.</li>';
+  CODES.forEach(c => {
+    const el = $(`.agent[data-code="${c}"] .gov`, root); if (!el) return;
+    const sessions = govBy[agentId(c)]; if (!sessions) { el.textContent = ""; el.className = "gov"; return; }
+    const flagged = sessions.flatMap(s => s.actions).filter(x => x.flags.some(f => CONCERN.includes(f))).length;
+    el.textContent = flagged ? `Governor ⚠ ${flagged}` : "Governor ✓";
+    el.className = "gov " + (flagged ? "warn" : "ok");
+  });
+}
+function renderApprovals() {
+  const el = $("#lpPending");
+  const who = ($("#lpWho") && $("#lpWho").value) || "Facility manager";
+  el.innerHTML = pending.length ? `<div class="gp-head">Waiting for a human (${pending.length})
+      <label class="gp-who">Approver <input id="lpWho" value="${esc(who)}" aria-label="Approver name"></label>
+      <button class="btn sm" data-approve="all">Approve all</button></div>` + pending.map(p => `
+    <div class="gp"><b>${esc(p.id)}</b> <code>${esc(p.action)}</code> <span>${esc(p.agent)}</span>
+      <button class="btn sm primary" data-approve="${esc(p.id)}">Approve</button>
+      <button class="btn sm ghost" data-reject="${esc(p.id)}">Reject</button></div>`).join("") : "";
+  // The decision is the next message in the run series; "by" is recorded as the approver
+  const decide = (verb, id) => {
+    const by = ($("#lpWho").value || "Facility manager").trim().slice(0, 60);
+    scan(`${verb} ${id} ${JSON.stringify({ [verb]: [id], by })}`);
+  };
+  el.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => decide("approve", b.dataset.approve));
+  el.querySelectorAll("[data-reject]").forEach(b => b.onclick = () => decide("reject", b.dataset.reject));
+}
+
 function onEvent(m) {
   if (m.kind === "antibody.agent.report") {
     const r = m.report; reports[r.subsystem] = r; setAgent(r.subsystem, statusOf(r), r); recompute();
+  } else if (m.kind === "antibody.action") {
+    acts.push(m); renderGov();
+  } else if (m.kind === "antibody.governance") {
+    (govBy[m.agent] = govBy[m.agent] || []).push(m); renderGov();
+  } else if (m.kind === "antibody.scan.funnel") {
+    const recorded = Object.values(govBy).flat().flatMap(s => s.actions);
+    const flagged = recorded.filter(x => x.flags.some(f => CONCERN.includes(f))).length;
+    $("#lpFunnel").innerHTML = `<b>${m.actions}</b> actions → <b>${m.auto_fixes}</b> fixed by the agents → <b>${m.escalations}</b> escalations → <b>${m.human_decisions}</b> waiting for a human`
+      + `<br><span class="gov-sum">Sentience Governor recorded ${recorded.length} actions and flagged ${flagged}.</span>`;
+    pending = m.pending || []; renderApprovals();
   } else if (m.kind === "antibody.tool") {
     onTool(m);
   } else if (m.kind === "antibody.connectors") {
@@ -185,6 +264,7 @@ async function scan(prompt) {
   if (closeStream) closeStream();
   showError(""); resetTools();
   for (const k in reports) delete reports[k];
+  govBy = {}; acts = []; renderGov();
   LIVE.active = true; LIVE.health = null;
   CODES.forEach(c => setAgent(c, "scanning")); recompute();
   alertBuf = ""; $("#lpAlert").innerHTML = "";

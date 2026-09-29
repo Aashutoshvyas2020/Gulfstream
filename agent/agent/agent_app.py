@@ -577,6 +577,15 @@ def fallback_alert(
     return "\n".join(lines) + "\n"
 
 
+def emit_governance(agent: AgentSession) -> None:
+    """Send what each closed Governor session recorded: a run event and [governor] log lines."""
+    for summary in summaries():
+        agent.events.emit({"type": EVENT_GOVERNANCE, **summary})
+        line = pane_line(summary)
+        if line:
+            print(line, flush=True)
+
+
 def stream_alert(agent: AgentSession, stream: Any, output_text: list[str] | None = None) -> str:
     """Relay the alert to the frontend in text chunks and return the full text.
 
@@ -690,6 +699,8 @@ def main(agent: AgentSession, context: Context) -> None:
                     approval_id, status = approvals.hold(item)
                     emit_outcome(actions.outcome(code, item["action"], actions.APPROVAL, status,
                                                  approval_id=approval_id, reason=item.get("reason", "")))
+                # Governor: this agent's record, live, so the console can badge it as it reports
+                emit_governance(agent)
         save_actions(context, memory)
 
         # 2. Rank and score; health below the threshold escalates
@@ -758,11 +769,7 @@ def main(agent: AgentSession, context: Context) -> None:
 
     # Governor: what each agent's record says, as run events and [governor] log lines,
     # so records written on a hosted SuperGrid machine can still be shown to the operator
-    for summary in summaries():
-        agent.events.emit({"type": EVENT_GOVERNANCE, **summary})
-        line = pane_line(summary)
-        if line:
-            print(line, flush=True)
+    emit_governance(agent)
 
     # The funnel: actions -> autonomous fixes -> escalations -> human decisions
     counts = actions.funnel(outcomes, memory["pending"])
