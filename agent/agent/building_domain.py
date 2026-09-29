@@ -27,6 +27,7 @@ ACTIONS: dict[str, tuple[str, int]] = {
     "request_crack_remeasure": (READ, 0),
     "request_facade_rescan": (READ, 0),
     "recheck_riser_pressure": (READ, 0),
+    "run_emergency_light_test": (EXECUTE, 0),  # EGRESS 30-second self-test, re-read only
     # Tier 0: cleanup
     "clear_alert": (WRITE, 0),
     "rebaseline_sensor": (WRITE, 0),
@@ -37,6 +38,9 @@ ACTIONS: dict[str, tuple[str, int]] = {
     "adjust_ventilation": (WRITE, 1),
     "retry_levelling": (EXECUTE, 1),
     "enable_night_flow_isolation_mode": (EXECUTE, 1),
+    "reset_battery_charger": (EXECUTE, 1),  # GEN starting-battery charger
+    # Tier 2: the coordinator alerts a human
+    "escalate": (WRITE, 2),
     # Tier 3: consequential, human approval required
     "trip_breaker": (EXECUTE, 3),
     "shut_valve": (EXECUTE, 3),

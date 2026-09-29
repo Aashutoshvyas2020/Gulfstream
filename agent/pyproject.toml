@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "antibody"
 version = "0.3.0"
-description = "Antibody: an immune system for buildings. 11 AI agents hunt 11 kinds of failure."
+description = "Antibody: an immune system for buildings. 14 AI agents hunt 14 kinds of failure."
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<4.0"
 dependencies = ["flwr>=1.39.0,<=1.39.0", "openai>=2.16.0,<3.0.0", "sentience-governor>=0.3.2.1,<0.4"]

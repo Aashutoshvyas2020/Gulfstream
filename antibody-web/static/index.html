@@ -123,6 +123,14 @@ section{padding:56px 0}
 .split{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;margin-top:18px}
 .trend{font:500 12px var(--mono);color:var(--muted);margin-top:10px;min-height:16px}
 .trend b.up{color:var(--cell)} .trend b.down{color:var(--infect)}
+.approvals{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.approvals:empty{display:none}
+.approvals .funnel{font:500 12px var(--mono);color:var(--ink-2);margin-bottom:10px}
+.approvals .funnel b{color:var(--ink)}
+.approvals .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px dashed var(--line)}
+.approvals .row .what{flex:1;min-width:180px;font:500 12px var(--mono);color:var(--ink-2)}
+.approvals .row .what b{color:var(--watch)}
+.approvals .btn{padding:8px 12px;font-size:12px}
 .tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 .tool{font:500 11.5px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:6px 9px;transition:all .3s}
 .tool b{color:var(--ink-2);margin-left:4px}
@@ -159,7 +167,7 @@ section{padding:56px 0}
 .feed time{color:var(--muted);flex:none}
 .feed .t-inf{color:var(--infect)} .feed .t-ok{color:var(--cell)} .feed .t-w{color:var(--watch)} .feed .t-s{color:var(--scan)}
 .alert{min-height:200px;max-height:560px;overflow:auto;font-size:14px;color:var(--ink-2)}
-.alert:empty::before{content:"The coordinator's alert streams here after the 11 agents report.";color:var(--muted)}
+.alert:empty::before{content:"The coordinator's alert streams here after the agents report.";color:var(--muted)}
 .alert h1,.alert h2,.alert h3{color:var(--ink);font-size:16px;margin:16px 0 8px}
 .alert strong{color:var(--ink)}
 .alert table{width:100%;border-collapse:collapse;font-size:12.5px;margin:10px 0;display:block;overflow-x:auto}
@@ -233,14 +241,14 @@ footer{border-top:1px solid var(--line);padding:28px 0 48px;color:var(--muted);f
     <div>
       <div class="eyebrow">An immune system for buildings</div>
       <h1>Buildings get sick.<br><em>Antibody</em> fights back.</h1>
-      <p class="lede">11 AI agents each hunt one kind of failure (a hot breaker, a hidden leak, a widening crack, an open door into the control system) around the clock. When one building beats a failure, every building on the network becomes immune to it, and no building ever shares its data.</p>
+      <p class="lede">14 AI agents each hunt one kind of failure (a hot breaker, a hidden leak, a widening crack, an open door into the control system) around the clock. When one building beats a failure, every building on the network becomes immune to it, and no building ever shares its data.</p>
       <div class="cta">
         <button class="btn primary" id="heroScan">Run a live scan</button>
         <a class="btn ghost" href="#immunity" style="text-decoration:none">How immunity spreads</a>
       </div>
     </div>
     <div class="stats">
-      <div class="stat"><b>11</b><span>threats hunted</span></div>
+      <div class="stat"><b>14</b><span>threats hunted</span></div>
       <div class="stat"><b>1</b><span>coordinator that ranks them</span></div>
       <div class="stat"><b>0</b><span>readings that leave the building</span></div>
     </div>
@@ -249,14 +257,14 @@ footer{border-top:1px solid var(--line);padding:28px 0 48px;color:var(--muted);f
   <section id="console">
     <div class="sec-head">
       <div><div class="eyebrow">Live · real Flower agents</div><h2>Scan Harbor Point Tower</h2></div>
-      <p>Each scan starts a real Flower run: 11 specialist agents examine their system in parallel, the coordinator ranks every threat by risk × consequence × urgency and writes the alert.</p>
+      <p>Each scan starts a real Flower run: 14 specialist agents examine their system in parallel, the coordinator ranks every threat by risk × consequence × urgency and writes the alert.</p>
     </div>
     <div class="banner" id="banner"></div>
 
     <div class="console">
       <div class="panel building">
         <h3 id="bldName">Building</h3>
-        <svg viewBox="0 0 420 560" id="bldSvg" role="img" aria-label="Building cross-section with 11 monitored areas"></svg>
+        <svg viewBox="0 0 420 560" id="bldSvg" role="img" aria-label="Building cross-section with 14 monitored areas"></svg>
         <div class="legend">
           <span><i style="background:var(--off)"></i>idle</span>
           <span><i style="background:var(--scan)"></i>scanning</span>
@@ -275,7 +283,7 @@ footer{border-top:1px solid var(--line);padding:28px 0 48px;color:var(--muted);f
             </div>
             <div>
               <div class="kpis">
-                <div class="kpi"><b id="kReported">0/11</b><span>agents reported</span></div>
+                <div class="kpi"><b id="kReported">0/0</b><span>agents reported</span></div>
                 <div class="kpi"><b id="kInfected" style="color:var(--infect)">0</b><span>infected</span></div>
                 <div class="kpi"><b id="kWatch" style="color:var(--watch)">0</b><span>on watch</span></div>
                 <div class="kpi"><b id="kTime">0s</b><span>scan time</span></div>
@@ -310,10 +318,11 @@ footer{border-top:1px solid var(--line);padding:28px 0 48px;color:var(--muted);f
             <span class="tool" data-t="notion">notion <b>0</b></span>
             <span class="tool" data-t="start_automation">start_automation <b>0</b></span>
           </div>
+          <div class="approvals" id="approvals" aria-live="polite"></div>
         </div>
 
         <div class="panel">
-          <h3>The 11 hunters</h3>
+          <h3>The <span id="agentCount">11</span> hunters</h3>
           <div class="cells" id="cells"></div>
         </div>
       </div>
@@ -353,7 +362,7 @@ footer{border-top:1px solid var(--line);padding:28px 0 48px;color:var(--muted);f
   <section id="how">
     <div class="sec-head"><div><div class="eyebrow">Under the hood</div><h2>Sense. Rank. Alert. Remember.</h2></div></div>
     <div class="steps">
-      <div class="step"><h4>Sense</h4><p>11 specialist agents each read their own system and file a report with a risk, evidence and a fix.</p><div class="fl">Flower AgentApp · parallel agents</div></div>
+      <div class="step"><h4>Sense</h4><p>14 specialist agents each read their own system and file a report with a risk, evidence and a fix.</p><div class="fl">Flower AgentApp · parallel agents</div></div>
       <div class="step"><h4>Rank</h4><p>The coordinator ranks every threat by risk × consequence × urgency in plain code, so every decision can be audited.</p><div class="fl">Deterministic scoring</div></div>
       <div class="step"><h4>Investigate</h4><p>It cites the governing safety standard, checks Slack for tenant reports and Notion for open work orders, and schedules round-the-clock rescans.</p><div class="fl">Connectors · web_search · web_fetch · slack · notion · start_automation</div></div>
       <div class="step"><h4>Remember</h4><p>Every scan is saved to the building's history, so the next one reports the trend. It runs on the building's own box with a local model.</p><div class="fl">Run-series state · local SuperLink + Ollama · federation</div></div>
@@ -370,7 +379,8 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 // Where each problem area sits on the cross-section (viewBox 420x560)
 const SPOTS = {
   HVAC:[262,44], ENV:[92,168], AIR:[170,132], H2O:[300,236], LIFT:[228,186], WIRE:[150,336],
-  FIRE:[118,386], CYBER:[282,386], ELEC:[160,436], PWR:[286,436], STR:[216,488]
+  FIRE:[118,386], CYBER:[282,386], ELEC:[160,436], PWR:[286,436], STR:[216,488],
+  EGRESS:[228,290], GAS:[110,488], GEN:[330,488]
 };
 const INJECTIONS = [
   {label:"Leak spreads", o:{H2O:{night_flow_lpm_building_empty:14, ceiling_moisture_sensor_4E:"wet on floors 3 and 4", pressure_drop_psi_last_6h:9}}},
@@ -469,9 +479,36 @@ function provisionalHealth(){
 }
 function refreshKpis(){
   const rs = Object.values(reports);
-  $("#kReported").textContent = `${rs.length}/11`;
+  $("#kReported").textContent = `${rs.length}/${agentTotal()}`;
   $("#kInfected").textContent = rs.filter(r => statusOf(r) === "infected").length;
   $("#kWatch").textContent = rs.filter(r => statusOf(r) === "watch").length;
+}
+
+const agentTotal = () => META ? Object.keys(META.specialists).length : 0;
+
+// Tier 0-3 actions (antibody.action) and the approvals funnel (antibody.scan.funnel)
+const ACTION_CLS = {done:"t-ok", fixed:"t-ok", executed:"t-ok", recheck_failed:"t-w", escalated:"t-w",
+  refused:"t-inf", held:"t-w", rejected:"t-s", skipped:"t-s", failed:"t-inf"};
+const ACTION_TEXT = {done:"done", fixed:"fixed and re-checked", executed:"carried out (approved)",
+  recheck_failed:"re-check failed", escalated:"escalated to a human", refused:"refused (not its tool)",
+  held:"held for your approval", rejected:"rejected", skipped:"skipped (rejected)", failed:"failed"};
+function onAction(m){
+  const attempt = m.attempt ? ` (attempt ${m.attempt})` : "";
+  const id = m.approval_id ? ` · ${m.approval_id}` : "";
+  const detail = m.detail ? ` · ${m.detail}` : "";
+  feed(`${m.agent} ${m.action}: ${ACTION_TEXT[m.status] || m.status}${attempt}${id}${detail}`, ACTION_CLS[m.status] || "t-s");
+}
+function onFunnel(m){
+  const el = $("#approvals");
+  const rows = (m.pending || []).map(p => `
+    <div class="row">
+      <span class="what"><b>${esc(p.id)}</b> ${esc(p.agent)} · ${esc(p.action)}${p.reason ? " · " + esc(p.reason) : ""}</span>
+      <button class="btn primary" data-decide="approve" data-id="${esc(p.id)}">Approve</button>
+      <button class="btn ghost" data-decide="reject" data-id="${esc(p.id)}">Reject</button>
+    </div>`).join("");
+  const n = (count, one, many) => `<b>${count}</b> ${count === 1 ? one : (many || one + "s")}`;
+  el.innerHTML = `<div class="funnel">Last scan: ${n(m.actions, "agent action")} → ${n(m.auto_fixes, "autonomous fix", "autonomous fixes")} → ${n(m.escalations, "escalation")} → ${n(m.human_decisions, "human decision")}</div>` + rows;
+  el.querySelectorAll("[data-decide]").forEach(b => b.onclick = () => startScan(`${b.dataset.decide} ${b.dataset.id}`, false));
 }
 
 function feed(text, cls = ""){
@@ -518,6 +555,8 @@ function onTool(m){
     toolCounts[g] = (toolCounts[g] || 0) + 1;
     if (t){ t.classList.add("used", "flash"); $("b", t).textContent = toolCounts[g]; setTimeout(() => t.classList.remove("flash"), 700); }
     feed(`Coordinator → ${m.name}${m.detail ? ": " + m.detail : ""}`, "t-s");
+  } else if (m.status === "held"){
+    feed(`${m.name} held for your approval (${m.detail})`, "t-w");
   } else if (m.status === "failed"){
     if (t) t.classList.add("err");
     feed(`${m.name} unavailable on this SuperLink`, "t-w");
@@ -534,7 +573,7 @@ async function startScan(prompt, newSeries){
   for (const k of Object.keys(reports)) delete reports[k];
   Object.keys(META.specialists).forEach(code => setArea(code, "scanning"));
   refreshKpis(); setHealth(100); $("#healthNum").textContent = "…";
-  alertBuf = ""; $("#alert").innerHTML = "";
+  alertBuf = ""; $("#alert").innerHTML = ""; $("#approvals").innerHTML = "";
   const overrides = overridesSelected();
   busy(true, "Starting Flower run…");
   feed(Object.keys(overrides).length ? `Injected: ${Object.keys(overrides).join(", ")}` : "Scan requested", "t-s");
@@ -547,7 +586,7 @@ async function startScan(prompt, newSeries){
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return fail(data.detail || `Scan failed (${res.status})`);
   runId = data.run_id;
-  feed(`Flower run ${runId.slice(-6)} started · 11 agents deployed`, "t-s");
+  feed(`Flower run ${runId.slice(-6)} started · ${agentTotal()} agents deployed`, "t-s");
   busy(true, "Agents hunting…");
   listen(runId);
 }
@@ -568,6 +607,10 @@ function listen(id){
       feed(`${r.subsystem} agent: ${r.finding} (risk ${r.risk_score.toFixed(2)})`, s === "infected" ? "t-inf" : s === "watch" ? "t-w" : "t-ok");
     } else if (m.kind === "antibody.tool"){
       onTool(m);
+    } else if (m.kind === "antibody.action"){
+      onAction(m);
+    } else if (m.kind === "antibody.scan.funnel"){
+      onFunnel(m);
     } else if (m.kind === "antibody.scan.ranked"){
       setHealth(m.health, true);
       if (m.previous_health != null){
@@ -578,7 +621,7 @@ function listen(id){
         const c = $(`.cell[data-code="${r.subsystem}"]`);
         if (c){ c.style.order = r.rank; $(".rank", c).textContent = "#" + r.rank; }
       });
-      feed(`Coordinator ranked 11 threats · health ${m.health}/100 · top: ${m.ranked[0].subsystem}`, "t-s");
+      feed(`Coordinator ranked ${m.ranked.length} threats · health ${m.health}/100 · top: ${m.ranked[0].subsystem}`, "t-s");
       busy(true, "Coordinator writing alert…");
     } else if (m.kind === "response.output_text.delta"){
       alertBuf += m.delta || "";
@@ -659,7 +702,7 @@ async function boot(){
     META = await (await fetch("/api/meta")).json();
   }catch(e){ banner("Backend unreachable. Start server.py."); return; }
   $("#bldName").textContent = `${META.building.name} · ${META.building.floors} floors · ${META.building.area_sqft.toLocaleString()} sq ft`;
-  drawCells();
+  drawCells(); refreshKpis(); $("#agentCount").textContent = agentTotal();
   if (META.error){ $("#connDot").className = "dot bad"; $("#connText").textContent = `${META.superlink} · offline`; banner(META.error); }
   else { $("#connDot").className = "dot live"; $("#connText").textContent = `Flower · ${META.superlink} · ${META.federation}`; }
 }

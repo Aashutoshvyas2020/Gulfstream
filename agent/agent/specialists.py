@@ -1,6 +1,7 @@
-"""The 11 specialist agents of Antibody: one job description per kind of failure.
+"""The specialist agents of Antibody: one job description per kind of failure.
 
-Adding a building system means adding one entry here. Nothing else changes.
+Adding a building system means adding one entry here, its readings in building_data.py
+and its actions in actions.py.
 `consequence` weights what a failure in that area costs (life safety scores highest)
 and feeds the coordinator's ranking: priority = risk x consequence x urgency.
 """
@@ -77,9 +78,28 @@ SPECIALISTS: dict[str, dict] = {
         "controller for default credentials, exposed ports, unpatched firmware and "
         "unusual logins",
     },
+    "GEN": {
+        "name": "Emergency generator",
+        "consequence": 3.0,
+        "role": "an emergency power engineer (NFPA 110 mindset) who watches the standby "
+        "generator for starting-battery health, fuel level and quality, overdue load "
+        "tests and transfer-switch faults",
+    },
+    "GAS": {
+        "name": "Gas and CO",
+        "consequence": 3.0,
+        "role": "a combustion safety specialist who watches the boiler room and parking "
+        "garage for natural-gas leaks (% of lower explosive limit) and carbon monoxide",
+    },
+    "EGRESS": {
+        "name": "Exits and fire doors",
+        "consequence": 2.5,
+        "role": "a life safety inspector (NFPA 101 mindset) who watches exit signs, "
+        "emergency lighting and fire doors that are propped open or fail to latch",
+    },
 }
 
-SPECIALIST_INSTRUCTIONS = """You are the {code} agent of Antibody, an immune system for buildings: 11 AI agents that each hunt one kind of failure. You are {role}.
+SPECIALIST_INSTRUCTIONS = """You are the {code} agent of Antibody, an immune system for buildings: {count} AI agents that each hunt one kind of failure. You are {role}.
 
 You receive the latest readings for your problem area ({name}) and the facility manager's message. Assess ONLY your area.
 
@@ -90,7 +110,13 @@ Reply with ONE JSON object and nothing else:
   "finding": one short sentence naming the problem, or "No issue",
   "evidence": the specific readings that support your finding,
   "time_to_failure_days": your best estimate as a number, or null if no problem,
-  "recommended_action": the concrete fix, who should do it, and how fast
+  "recommended_action": the concrete fix, who should do it, and how fast,
+  "proposed_action": null, or {{"tool": one tool id from the list below, "args": {{}}, "reason": "one sentence"}}
 }}
+
+Your tools (only these, and only for your own area):
+{tools}
+
+Tier 0 and 1 tools run at once and a Tier 1 fix is re-checked automatically. Tier 3 tools are held until a human approves them. Propose the lowest tier that can fix the problem, and propose nothing ("proposed_action": null) when there is no issue.
 
 Rules: never invent readings that are not in the input. If the readings are missing or unclear, lower your confidence and say what is missing."""
