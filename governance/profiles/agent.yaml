@@ -20,11 +20,11 @@ task_boundary:
 high_consequence:
   # Regex over "<tool_id>:<target_system>". Tier 3: human approval required.
   tools:
-    - "^trip_breaker:"
-    - "^shut_valve:"
-    - "^isolate_zone:"
-    - "^take_out_of_service:"
-    - "^dispatch_contractor:"
-    - "^notify_tenants:"
-    - "^start_automation:"
+    - "(^|\\.)trip_breaker:"
+    - "(^|\\.)shut_valve:"
+    - "(^|\\.)isolate_zone:"
+    - "(^|\\.)take_out_of_service:"
+    - "(^|\\.)dispatch_contractor:"
+    - "(^|\\.)notify_tenants:"
+    - "(^|\\.)start_automation:"
   on_match: flag

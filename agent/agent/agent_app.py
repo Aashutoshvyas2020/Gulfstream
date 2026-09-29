@@ -26,10 +26,11 @@ from flwr.app import ConfigRecord, Context
 from openai import OpenAI
 
 from .building_data import BUILDING, SNAPSHOT
+from .governance import AgentRecord
 from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
 
-# Flower Runtime model on SuperGrid; set ANTIBODY_MODEL to run on a local model, e.g. gemma4:latest
-MODEL = os.environ.get("ANTIBODY_MODEL", "openai/gpt-5.6-sol")
+# Flower's own Endeavor model via the Flower Runtime; set ANTIBODY_MODEL to run on a local model, e.g. gemma4:latest
+MODEL = os.environ.get("ANTIBODY_MODEL", "flower-endeavor-v1.0")
 # Built-in connectors, then account connectors (these only work when bound to the run)
 CONNECTOR_REFS = ("web_search", "web_fetch", "start_automation", "slack", "notion")
 MAX_TOOL_TURNS = 4
@@ -107,9 +108,19 @@ def clamp01(value: Any) -> float:
         return 0.0
 
 
-def run_specialist(client: OpenAI, code: str, readings: dict, prompt: str) -> dict[str, Any]:
+def run_specialist(
+    client: OpenAI, code: str, readings: dict, prompt: str, run_tag: str
+) -> dict[str, Any]:
     """One specialist agent assesses its own problem area and returns a report."""
     spec = SPECIALISTS[code]
+    area = code.lower()
+    # Governor: this agent's own session, scoped to its own area
+    record = AgentRecord(
+        f"antibody-{area}",
+        objective=f"Watch the {spec['name']} ({code}); report risk; Tier 0/1 fixes only",
+        scope=[area],
+        run_tag=run_tag,
+    )
     report: dict[str, Any] = {
         "agent_id": f"antibody-{code.lower()}",
         "subsystem": code,
@@ -117,13 +128,16 @@ def run_specialist(client: OpenAI, code: str, readings: dict, prompt: str) -> di
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     try:
-        response = client.responses.create(
-            model=MODEL,
-            instructions=SPECIALIST_INSTRUCTIONS.format(code=code, **spec),
-            input=(
-                f"Building: {json.dumps(BUILDING)}\n"
-                f"Readings for {code}: {json.dumps(readings)}\n"
-                f"Facility manager's message: {prompt}"
+        response = record.call(
+            f"{area}.assess",
+            lambda: client.responses.create(
+                model=MODEL,
+                instructions=SPECIALIST_INSTRUCTIONS.format(code=code, **spec),
+                input=(
+                    f"Building: {json.dumps(BUILDING)}\n"
+                    f"Readings for {code}: {json.dumps(readings)}\n"
+                    f"Facility manager's message: {prompt}"
+                ),
             ),
         )
         parsed = extract_json(response.output_text)
@@ -140,6 +154,8 @@ def run_specialist(client: OpenAI, code: str, readings: dict, prompt: str) -> di
             "recommended_action": "Re-run the scan or check this area manually",
             "failed": True,
         }
+    finally:
+        record.close()
     return {
         **report,
         "risk_score": clamp01(parsed.get("risk_score")),
@@ -245,7 +261,10 @@ def tool_summary(call: dict[str, Any]) -> str:
 
 
 def investigate(
-    agent: AgentSession, client: OpenAI, input_items: list[dict[str, Any]]
+    agent: AgentSession,
+    client: OpenAI,
+    input_items: list[dict[str, Any]],
+    record: AgentRecord,
 ) -> None:
     """Bounded connector loop: standards, Slack / Notion evidence, automations."""
     tools = connector_tools(agent)
@@ -274,7 +293,7 @@ def investigate(
             try:
                 if name not in allowed:
                     raise RuntimeError(f"Tool {name!r} was not exposed")
-                result = agent.connectors.call(call)
+                result = record.call(name, lambda: agent.connectors.call(call))
                 failed = '"error"' in str(result.get("output", ""))[:400]
             except Exception as exc:  # connector errors go back to the model, not up
                 result = {
@@ -340,12 +359,15 @@ def main(agent: AgentSession, context: Context) -> None:
     memory = load_memory(context)
     history = memory["history"]
 
+    # Governor records for this scan: one file per agent, named by run and time
+    run_tag = f"{context.run_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+
     # 1. Sense: 11 specialist agents in parallel; each report is emitted as it lands
     agent.events.emit({"type": EVENT_SCAN_STARTED, "areas": list(SPECIALISTS)})
     reports = []
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_AGENTS) as pool:
         futures = [
-            pool.submit(run_specialist, client, code, readings[code], prompt)
+            pool.submit(run_specialist, client, code, readings[code], prompt, run_tag)
             for code in SPECIALISTS
         ]
         for future in as_completed(futures):
@@ -384,7 +406,16 @@ def main(agent: AgentSession, context: Context) -> None:
             "content": "Swarm scan results (JSON):\n" + json.dumps(scan, indent=1),
         }
     )
-    investigate(agent, client, input_items)
+    coordinator = AgentRecord(
+        "antibody-coordinator",
+        objective="Rank the specialists' reports, investigate the top problems, alert the facility manager",
+        scope=list(CONNECTOR_REFS),
+        run_tag=run_tag,
+    )
+    try:
+        investigate(agent, client, input_items, coordinator)
+    finally:
+        coordinator.close()
 
     # 4. Alert
     stream = client.responses.create(

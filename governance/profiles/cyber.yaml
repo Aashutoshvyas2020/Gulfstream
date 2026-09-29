@@ -13,11 +13,11 @@ task_boundary:
 
 high_consequence:
   tools:
-    - "^close_port:"
-    - "^reset_password:"
-    - "^disable_account:"
-    - "^change_firewall_rule:"
-    - "^push_config:"
-    - "^notify_tenants:"
-    - "^start_automation:"
+    - "(^|\\.)close_port:"
+    - "(^|\\.)reset_password:"
+    - "(^|\\.)disable_account:"
+    - "(^|\\.)change_firewall_rule:"
+    - "(^|\\.)push_config:"
+    - "(^|\\.)notify_tenants:"
+    - "(^|\\.)start_automation:"
   on_match: flag
