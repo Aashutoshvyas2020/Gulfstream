@@ -54,9 +54,17 @@ root.innerHTML = `
     </div>
     <div class="lp-col">
       <h4>The 11 agents</h4>
+      <p class="triage" id="lpTriage">The coordinator triages first and wakes only the agents that need to investigate.</p>
       <div class="agents" id="lpAgents"></div>
+      <h4>Investigation trail <span class="h4-note">live tool calls by the agents</span></h4>
+      <ol class="trail" id="lpTrail"><li class="empty">Every sensor read, diagnostic, question between agents and fix appears here as it happens.</li></ol>
     </div>
     <div class="lp-col lp-wide">
+      <p class="funnel" id="lpFunnel"></p>
+      <h4>Waiting for your approval <span class="h4-note">Tier 3 actions agents may not take alone</span></h4>
+      <div class="approvals" id="lpApprovals"><p class="empty">Nothing queued yet.</p></div>
+      <h4>Campus network <span class="h4-note">lessons shared with building SuperNodes over the Flower grid</span></h4>
+      <div class="network" id="lpNetwork"><p class="empty">After the scan, lessons (rules, never readings) go to every building that is online.</p></div>
       <h4>Coordinator alert</h4>
       <div class="alert" id="lpAlert"></div>
       <h4>Sources the coordinator found</h4>
@@ -84,7 +92,9 @@ function setAgent(code, status, r) {
   const bar = $(".bar i", el);
   if (!r) { bar.style.width = "0"; $(".finding", el).textContent = ""; $(".more", el).innerHTML = ""; return; }
   bar.style.width = Math.round(r.risk_score * 100) + "%";
-  $(".finding", el).textContent = `${r.finding} · risk ${r.risk_score.toFixed(2)}`;
+  const how = r.woken === false ? "quiet (triage)" : `${r.tool_calls || 0} tool calls${r.asks ? `, asked ${r.asks}` : ""}`;
+  $(".finding", el).textContent = `${r.finding} · risk ${r.risk_score.toFixed(2)} · ${how}`;
+  el.classList.toggle("quiet", r.woken === false);
   const ev = typeof r.evidence === "string" ? r.evidence : JSON.stringify(r.evidence);
   $(".more", el).innerHTML = `<b>Evidence</b> ${esc(ev)}<br><b>Fix</b> ${esc(r.recommended_action)}`;
 }
@@ -129,6 +139,51 @@ function markOffered(refs) {
   root.querySelectorAll(".tool").forEach(t => t.classList.toggle("off", !refs.includes(t.dataset.t)));
 }
 
+const TOOL_VERB = { read_sensor: "read", run_diagnostic: "ran", get_maintenance_log: "checked log", ask_agent: "asked", apply_fix: "fixed", request_approval: "asked a human to" };
+let trailCount = 0;
+function addTrail(m) {
+  const el = $("#lpTrail");
+  if (!trailCount) el.innerHTML = "";
+  trailCount++;
+  const a = m.args || {};
+  const target = m.tool === "ask_agent" ? `<b>${esc(m.to || a.agent || "")}</b>: "${esc(a.question || "")}"`
+    : m.tool === "read_sensor" ? esc(a.metric || "") : m.tool === "run_diagnostic" ? esc(a.test || "")
+    : (m.tool === "apply_fix" || m.tool === "request_approval") ? esc(a.action || "") : "";
+  const li = document.createElement("li");
+  li.className = `t-${m.tool}`;
+  li.innerHTML = `<span class="who">${esc(m.agent)}</span><span class="what">${TOOL_VERB[m.tool] || esc(m.tool)} ${target}</span><span class="res">${esc(m.result)}</span>`;
+  el.prepend(li);
+  while (el.children.length > 60) el.lastChild.remove();
+  if (m.tool === "ask_agent" && m.to) LIVE.links.push({ from: m.agent, to: m.to, t: performance.now() });
+}
+const approvals = new Map();
+function renderApprovals() {
+  const el = $("#lpApprovals");
+  if (!approvals.size) { el.innerHTML = '<p class="empty">Nothing queued.</p>'; return; }
+  el.innerHTML = [...approvals.values()].map(a => `
+    <div class="approval${a.done ? " done" : ""}"><div><b>${esc(a.area)}</b> <code>${esc(a.action)}</code><p>${esc(a.reason)}</p></div>
+    <button class="btn primary sm" data-action="${esc(a.action)}" ${a.done ? "disabled" : ""}>${a.done ? "Approved" : "Approve"}</button></div>`).join("");
+  el.querySelectorAll("button[data-action]").forEach(b => b.addEventListener("click", () => {
+    const a = approvals.get(b.dataset.action); a.done = true; renderApprovals();
+    scan(`Approve ${a.action}. Execute it and re-check the ${a.area} readings.`);
+  }));
+}
+function renderNetwork(m) {
+  const el = $("#lpNetwork");
+  const lessons = (m.lessons || []).map(l => `<li><b>${esc(l.area)}</b> ${esc(l.text)}</li>`).join("");
+  if (!m.online) { el.innerHTML = '<p class="empty">No building SuperNodes online in this federation.</p>'; return; }
+  const replies = m.replies || [];
+  const rows = m.stage === "replied"
+    ? replies.map(r => r.error ? `<div class="bld err"><b>${esc(r.building || r.node_id)}</b><span>${esc(r.error)}</span></div>`
+        : `<div class="bld${r.matches && r.matches.length ? " hit" : ""}"><b>${esc(r.building)}</b><span>${r.matches && r.matches.length ? r.matches.map(x => `<em>${esc(x.area)}</em> ${esc(x.evidence)}`).join("<br>") : "clear: none of the lessons match"}</span></div>`).join("")
+    : `<p class="empty">Sent to ${m.online} building SuperNode${m.online > 1 ? "s" : ""}. Waiting for them to check their own data…</p>`;
+  el.innerHTML = `<p class="net-head">${m.online} building${m.online > 1 ? "s" : ""} online · ${(m.lessons || []).length} lessons shared · readings stay on each node</p>${lessons ? `<ul class="lessons">${lessons}</ul>` : ""}${rows}`;
+}
+function renderFunnel(f) {
+  if (!f) { $("#lpFunnel").textContent = ""; return; }
+  $("#lpFunnel").innerHTML = `<b>${f.woken}</b> agents woken → <b>${f.tool_calls}</b> tool calls → <b>${f.fixes}</b> fixes done by agents → <b>${f.approvals}</b> waiting for a human${f.executed_after_approval ? ` · <b>${f.executed_after_approval}</b> executed after approval` : ""}`;
+}
+
 function renderSources() {
   const el = $("#lpSources");
   if (!sources.size) { el.innerHTML = '<li class="empty">Standards and references from web_search appear here.</li>'; return; }
@@ -163,8 +218,18 @@ function onEvent(m) {
     onTool(m);
   } else if (m.kind === "antibody.connectors") {
     markOffered(m.offered || []);
+  } else if (m.kind === "antibody.triage") {
+    $("#lpTriage").innerHTML = `Triage woke <b>${m.wake.map(esc).join(", ")}</b>; quiet: ${Object.keys(m.quiet || {}).map(esc).join(", ") || "none"}.`;
+    $("#lpTrend").textContent = `${m.wake.length} agents investigating with their tools…`;
+  } else if (m.kind === "antibody.trail") {
+    addTrail(m);
+  } else if (m.kind === "antibody.approval") {
+    if (!approvals.has(m.action)) approvals.set(m.action, { area: m.area, action: m.action, reason: m.reason });
+    renderApprovals();
+  } else if (m.kind === "antibody.network") {
+    renderNetwork(m);
   } else if (m.kind === "antibody.scan.ranked") {
-    LIVE.health = m.health; recompute();
+    LIVE.health = m.health; recompute(); renderFunnel(m.funnel);
     const box = $("#lpAgents"); m.ranked.forEach(r => box.appendChild($(`.agent[data-code="${r.subsystem}"]`, root)));
     const prev = m.previous_health;
     $("#lpTrend").innerHTML = prev != null
@@ -188,6 +253,10 @@ async function scan(prompt) {
   LIVE.active = true; LIVE.health = null;
   CODES.forEach(c => setAgent(c, "scanning")); recompute();
   alertBuf = ""; $("#lpAlert").innerHTML = "";
+  trailCount = 0; $("#lpTrail").innerHTML = '<li class="empty">Waiting for triage…</li>'; renderFunnel(null);
+  $("#lpNetwork").innerHTML = '<p class="empty">Lessons are shared with the other buildings after this scan.</p>';
+  for (const [k, a] of approvals) if (a.done) approvals.delete(k);
+  renderApprovals();
   const overrides = {};
   root.querySelectorAll('.chip[data-i][aria-pressed="true"]').forEach(ch => {
     for (const [k, v] of Object.entries(INJECTIONS[+ch.dataset.i].o)) overrides[k] = { ...(overrides[k] || {}), ...v };

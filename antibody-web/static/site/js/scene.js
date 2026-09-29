@@ -186,6 +186,18 @@ if (renderer) {
     (1 - t) ** 2 * p0.y + 2 * (1 - t) * t * p1.y + t * t * p2.y,
     (1 - t) ** 2 * p0.z + 2 * (1 - t) * t * p1.z + t * t * p2.z);
 
+  /* ---------- agent-to-agent questions: a pulse between two areas ---------- */
+  const codeIndex = Object.fromEntries(AREAS.map((a, i) => [a.code, i]));
+  const askLinks = Array.from({ length: 4 }, () => {
+    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x8c1515, transparent: true, opacity: 0, depthTest: false }));
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 12), new THREE.MeshBasicMaterial({ color: 0x8c1515, transparent: true, opacity: 0, depthTest: false }));
+    line.renderOrder = bead.renderOrder = 5;
+    scene.add(line, bead);
+    return { line, bead };
+  });
+  const LINK_MS = 7000;
+
   /* ---------- campus network (red-roof quad buildings) ---------- */
   const network = new THREE.Group(); scene.add(network);
   const nodes = [];
@@ -321,6 +333,21 @@ if (renderer) {
       ab.g.position.y += k2 >= 1 ? Math.sin(t * 2 + i) * 0.06 : 0;
       ab.g.rotation.y = t * 1.2 + i;
       ab.g.scale.setScalar(0.6 + 0.6 * k2);
+    });
+
+    /* agent-to-agent questions during a live scan */
+    const nowMs = performance.now();
+    const recent = STORY.useLive ? LIVE.links.filter(l => nowMs - l.t < LINK_MS).slice(-askLinks.length) : [];
+    askLinks.forEach((al, k) => {
+      const l = recent[k];
+      if (!l || codeIndex[l.from] == null || codeIndex[l.to] == null) { al.line.material.opacity = 0; al.bead.material.opacity = 0; return; }
+      const a = spots[codeIndex[l.from]].g.position, b = spots[codeIndex[l.to]].g.position;
+      const pos = al.line.geometry.attributes.position;
+      pos.setXYZ(0, a.x, a.y, a.z); pos.setXYZ(1, b.x, b.y, b.z); pos.needsUpdate = true;
+      const age = (nowMs - l.t) / LINK_MS, fade = age < 0.8 ? 1 : (1 - age) / 0.2;
+      al.line.material.opacity = 0.85 * fade;
+      al.bead.position.lerpVectors(a, b, ((nowMs - l.t) / 1200) % 1);
+      al.bead.material.opacity = fade;
     });
 
     /* health, shield and coordinator */

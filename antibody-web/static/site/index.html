@@ -85,10 +85,10 @@
     <div class="card">
       <p class="eyebrow">02 · Hunt</p>
       <h2>Eleven hunters. One coordinator.</h2>
-      <p>Each agent is a specialist: an electrical engineer for the switchgear, a plumber for leaks, a security analyst for the control system. It reads its own sensors and files a report with a risk, the evidence and a fix.</p>
+      <p>First the coordinator triages: it reads every area and wakes only the agents that need to dig. Each woken agent is a specialist with its own tools: it reads sensor histories, runs diagnostics, checks the maintenance log, asks other agents, applies safe fixes and re-checks them. It decides what to look at; nobody scripts the order.</p>
       <div class="formula">
         <code>priority = risk × consequence × urgency</code>
-        <p>The coordinator ranks every report in plain code, not by gut feel, so every decision can be audited.</p>
+        <p>Agents decide what to investigate and what to do; the guardrails stay in plain code: this ranking, which actions are safe for an agent and which need a human, and tool budgets.</p>
       </div>
       <ol class="rank">
         <li><b>CYBER</b><span>Default password, port open to the internet</span><em class="c-inf">0.95</em></li>
@@ -126,7 +126,7 @@
         <div><span class="pill">Stays home</span><p>Sensor streams, camera frames, floor plans, control-system details.</p></div>
         <div><span class="pill ok">Travels</span><p>The lesson: "this battery model with this temperature curve failed next."</p></div>
       </div>
-      <p class="note">Roadmap: buildings as Flower SuperNodes, lessons sent with <code>agent.grid</code>. Illustrated here.</p>
+      <p class="note">Live, not a mock-up: each building runs as a Flower SuperNode with its data on its own disk. The coordinator on SuperGrid sends lessons with <code>agent.grid</code>; each node checks them and replies with matches only.</p>
     </div>
   </section>
 
@@ -134,7 +134,7 @@
     <div class="live-head">
       <p class="eyebrow">05 · Live</p>
       <h2>Run it for real.</h2>
-      <p>This starts a real run on Flower SuperGrid: 11 agents in parallel, then the coordinator ranks, searches the web for the governing standards and writes the alert. About two to three minutes. Readings are simulated; everything the agents do is real.</p>
+      <p>This starts a real run on Flower SuperGrid: triage, then the woken agents investigate with their tools while you watch the trail, then the coordinator cites the standards, shares lessons with the campus buildings and asks you to approve what agents may not do alone. About four minutes. Readings are simulated; everything the agents do is real.</p>
     </div>
     <div class="panel" id="livePanel"></div>
   </section>
@@ -144,12 +144,12 @@
       <p class="eyebrow">06 · Built on Flower</p>
       <h2>Why this needs Flower.</h2>
       <div class="features">
-        <div><b>AgentApp</b><p>11 specialists and a coordinator in one Flower app.</p></div>
+        <div><b>AgentApp + custom tools</b><p>11 tool-using specialists and a coordinator that triages, in one Flower app.</p></div>
         <div><b>Connectors</b><p><code>web_search</code>, <code>web_fetch</code>, Slack and Notion for evidence.</p></div>
         <div><b>Automations</b><p><code>start_automation</code> keeps the 24/7 watch running.</p></div>
         <div><b>Run-series state</b><p>Health history and follow-ups live in <code>context.state</code>.</p></div>
         <div><b>SuperGrid or on-site</b><p>Runs on Flower SuperGrid, or on a local SuperLink with a local model so the data never leaves the building.</p></div>
-        <div><b>Grid</b><p>Next: <code>agent.grid</code> to share lessons between buildings.</p></div>
+        <div><b>Grid + SuperNodes</b><p><code>agent.grid</code> sends lessons to building SuperNodes; data stays on each node.</p></div>
       </div>
       <p class="who">For facility managers, building owners, hospitals, data centers, campuses and insurers.</p>
     </div>

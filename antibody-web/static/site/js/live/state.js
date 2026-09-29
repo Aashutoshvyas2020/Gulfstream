@@ -21,6 +21,7 @@ export const LIVE = {
   health: null,
   provisional: 100,
   reported: 0,
+  links: [],  // {from, to, t}: one agent asked another (drawn briefly in 3D)
 };
 
 // Status bands used everywhere (panel, 3D, HUD)
