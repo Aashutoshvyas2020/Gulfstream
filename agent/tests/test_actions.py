@@ -363,6 +363,23 @@ class ScanTest(unittest.TestCase):
         self.assertIn("ConnectionError", text)
         self.assertIn("**Building health:", text)
 
+    def test_alert_call_has_its_own_time_limit(self):
+        model = FakeModel()
+        scan("Check the building.", {}, model)
+        self.assertEqual(model.inputs[-1]["timeout"], agent_app.ALERT_TIMEOUT)
+
+    def test_keep_alive_sends_progress_while_a_scan_is_quiet(self):
+        events: list[dict] = []
+        agent = SimpleNamespace(events=SimpleNamespace(emit=events.append))
+        saved, agent_app.KEEPALIVE_SECONDS = agent_app.KEEPALIVE_SECONDS, 0.05
+        try:
+            with agent_app.KeepAlive(agent):
+                import time
+                time.sleep(0.3)
+        finally:
+            agent_app.KEEPALIVE_SECONDS = saved
+        self.assertGreaterEqual(len(of_type(events, "antibody.progress")), 3)
+
     def test_investigation_can_be_switched_off(self):
         model = FakeModel(automation=True)
         agent_app.INVESTIGATE = False

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -54,6 +55,13 @@ MAX_TOOL_TURNS = 4
 INVESTIGATE_TIMEOUT = float(os.environ.get("ANTIBODY_INVESTIGATE_TIMEOUT", "50"))
 # ANTIBODY_INVESTIGATE=0 skips the connector investigation (demo-safe mode)
 INVESTIGATE = os.environ.get("ANTIBODY_INVESTIGATE", "1") != "0"
+# The alert call gets this many seconds (between streamed chunks) before the plain-code
+# alert takes over. Flower's own model timeout is about 5 minutes, and a chat or console
+# connection that hears nothing for that long is dropped.
+ALERT_TIMEOUT = float(os.environ.get("ANTIBODY_ALERT_TIMEOUT", "60"))
+# A small antibody.progress event this often keeps the run's event stream from going quiet
+KEEPALIVE_SECONDS = 15
+EVENT_PROGRESS = "antibody.progress"
 # Report fields the coordinator does not need; left out to keep its model calls small
 COORDINATOR_SKIP_FIELDS = {"actions", "held", "changes", "agent_id", "timestamp", "proposed_action"}
 # Specialist calls in flight at once. A local Ollama answers one request at a time, so
@@ -625,9 +633,47 @@ def stream_alert(agent: AgentSession, stream: Any, output_text: list[str] | None
     return "".join(output_text)
 
 
+class KeepAlive:
+    """Emit a small progress event every KEEPALIVE_SECONDS while a scan runs.
+
+    Model calls to Endeavor can take minutes with nothing streamed back; a `flwr chat`
+    or console connection that hears nothing for that long is dropped, even though the
+    run itself carries on. The chat CLI and the console ignore these events.
+    """
+
+    def __init__(self, agent: AgentSession) -> None:
+        self.agent = agent
+        self.started = time.monotonic()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self.stop.wait(KEEPALIVE_SECONDS):
+            try:
+                self.agent.events.emit(
+                    {"type": EVENT_PROGRESS, "elapsed": round(time.monotonic() - self.started)}
+                )
+            except Exception as exc:  # a missed keep-alive must never stop the scan
+                log(f"keep-alive event not sent: {exc}")
+
+    def __enter__(self) -> "KeepAlive":
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.stop.set()
+        self.thread.join(timeout=5)
+
+
 @app.main()
 def main(agent: AgentSession, context: Context) -> None:
     """Scan the building with the swarm, act within the tier rules, then answer as the coordinator."""
+    with KeepAlive(agent):
+        run_scan(agent, context)
+
+
+def run_scan(agent: AgentSession, context: Context) -> None:
+    """One scan: decide approvals, sense and act, rank, investigate, alert, remember."""
     client = OpenAI(
         base_url=os.environ["FLWR_RUNTIME_BASE_URL"],
         api_key=os.environ["FLWR_RUNTIME_API_KEY"],
@@ -796,6 +842,7 @@ def main(agent: AgentSession, context: Context) -> None:
             input=input_items,
             instructions=COORDINATOR_ANSWER.format(count=len(SPECIALISTS), top=TOP_ALERTS),
             stream=True,
+            timeout=ALERT_TIMEOUT,
         )
         alert = stream_alert(agent, stream, streamed)
         log(f"alert: done, {len(alert)} characters")
