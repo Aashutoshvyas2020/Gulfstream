@@ -32,7 +32,7 @@ from flwr.agentapp import AgentApp, AgentSession
 from flwr.app import ConfigRecord, Context
 from openai import APIStatusError, BadRequestError, OpenAI
 
-from . import actions, building_domain
+from . import actions, building_domain, notion_reports
 from .building_data import BUILDING, SNAPSHOT
 from .governance import AgentRecord, approved_record, pane_line, summaries
 from .specialists import SPECIALIST_INSTRUCTIONS, SPECIALISTS
@@ -78,6 +78,9 @@ REASSESS_AFTER_FIX = False
 # specialists' own findings, evidence and fixes (also model-written). On SuperGrid the
 # alert call has not finished inside ALERT_TIMEOUT, so it only added a minute.
 MODEL_ALERT = False
+# Search Notion (Flower's Notion connector) once per scan for tenant reports and work
+# orders, and match their titles to the areas. Skipped quietly when Notion is not connected.
+NOTION_REPORTS = True
 # A small antibody.progress event this often keeps the run's event stream from going quiet
 KEEPALIVE_SECONDS = 15
 EVENT_PROGRESS = "antibody.progress"
@@ -103,6 +106,7 @@ SETTINGS: dict[str, tuple[str, type]] = {
     "reasoning-effort": ("REASONING_EFFORT", str),
     "reassess-after-fix": ("REASSESS_AFTER_FIX", bool),
     "model-alert": ("MODEL_ALERT", bool),
+    "notion-reports": ("NOTION_REPORTS", bool),
 }
 # Legacy env names kept working
 ENV_ALIASES = {"parallel-agents": "ANTIBODY_PARALLEL"}
@@ -632,6 +636,34 @@ def investigate(
             return
 
 
+def lookup_notion(agent: AgentSession, record: AgentRecord) -> dict[str, list[dict[str, str]]]:
+    """One Notion search through Flower's connector; area -> matching report titles."""
+    try:
+        tools = agent.connectors.tools(["notion"])
+    except Exception as exc:  # not connected on this account, or not on this SuperLink
+        log(f"notion: not connected ({str(exc)[:120]})")
+        return {}
+    if not any(t.get("name") == notion_reports.SEARCH_TOOL for t in tools):
+        log("notion: search tool not available")
+        return {}
+    call = notion_reports.search_call()
+    agent.events.emit({"type": EVENT_TOOL, "name": call["name"], "status": "called",
+                       "detail": "tenant reports and work orders"})
+    try:
+        result = record.call(call["name"], lambda: agent.connectors.call(call))
+        failed = is_error_output(result)
+    except Exception as exc:
+        result, failed = {"output": json.dumps({"error": str(exc)})}, True
+    agent.events.emit({"type": EVENT_TOOL, "name": call["name"], "status": "failed" if failed else "ok"})
+    if failed:
+        log(f"notion: search failed ({str(result.get('output', ''))[:160]})")
+        return {}
+    found = notion_reports.pages(result.get("output"))
+    matched = notion_reports.match(found)
+    log(f"notion: {len(found)} page(s) shared, matched {sorted(matched) or 'none'}")
+    return matched
+
+
 def run_approved_connector(
     agent: AgentSession, item: dict[str, Any], run_tag: str
 ) -> dict[str, Any]:
@@ -940,6 +972,9 @@ def run_scan(agent: AgentSession, context: Context) -> None:
             emit_outcome(actions.outcome("COORDINATOR", actions.ESCALATE_ID, actions.ESCALATE, "escalated",
                                          detail=f"building health {health} is below {actions.HEALTH_ESCALATE}"))
 
+        # Tenant reports and work orders from Notion, matched to the areas
+        notion_matches = lookup_notion(agent, coordinator) if NOTION_REPORTS else {}
+
         # 3. Investigate with connectors
         def hold_connector(call: dict[str, Any]) -> str:
             reason = ("Facility manager asked for ongoing monitoring"
@@ -1019,6 +1054,7 @@ def run_scan(agent: AgentSession, context: Context) -> None:
             "investigation_results": investigation_results(input_items),
             "notes": notes,
             "start_automation": automation,
+            "notion_reports": notion_matches,
         }),
     })
     streamed: list[str] = []
@@ -1050,7 +1086,8 @@ def run_scan(agent: AgentSession, context: Context) -> None:
             "written by plain code from the scan._\n\n") + code_top_alerts(top)
         agent.events.emit({"type": TEXT_DELTA, "delta": extra})
         middle = "".join(streamed) + extra
-    closing = ("\n\n" + tail) if tail else ""
+    notion = notion_reports.section(notion_matches, ranked)
+    closing = "".join("\n\n" + part for part in (notion, tail) if part)
     if closing:
         agent.events.emit({"type": TEXT_DELTA, "delta": closing})
     alert = head + middle + closing

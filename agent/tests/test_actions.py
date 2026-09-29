@@ -536,6 +536,77 @@ class SpeedTest(unittest.TestCase):
         self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("| ") and line[2].isdigit()), 14)
 
 
+def notion_page(title, url="https://notion.so/x"):
+    return {"object": "page", "url": url,
+            "properties": {"Name": {"type": "title", "title": [{"plain_text": title}]}}}
+
+
+class NotionConnectors(Connectors):
+    """Connectors with Flower's Notion search, returning the given page titles."""
+
+    def __init__(self, titles):
+        super().__init__()
+        self.titles = titles
+
+    def tools(self, refs):
+        if refs == ["notion"]:
+            return [{"type": "function", "name": "notion_search"}]
+        return super().tools(refs)
+
+    def call(self, call):
+        self.called.append(call)
+        if call["name"] == "notion_search":
+            return {"type": "function_call_output", "call_id": call["call_id"],
+                    "output": json.dumps({"results": [notion_page(t) for t in self.titles]})}
+        return super().call(call)
+
+
+class NotionTest(unittest.TestCase):
+    def setUp(self):
+        self._enabled = governance.ENABLED
+        governance.ENABLED = False
+
+    def tearDown(self):
+        governance.ENABLED = self._enabled
+
+    def test_titles_are_matched_to_areas(self):
+        from agent import notion_reports
+        found = notion_reports.pages(json.dumps({"results": [
+            notion_page("Tenant 4E: water stain on ceiling near east riser"),
+            notion_page("Work order: battery room exhaust fan fault F12"),
+            notion_page("Tenant: elevator 2 door keeps reopening"),
+            notion_page("Team lunch on Friday"),
+        ]}))
+        self.assertEqual(len(found), 4)
+        matched = notion_reports.match(found)
+        self.assertEqual(sorted(matched), ["H2O", "LIFT", "PWR"])
+        self.assertEqual(notion_reports.pages('{"error": "unauthorized"}'), [])
+        self.assertEqual(notion_reports.pages("not json"), [])
+
+    def test_scan_searches_notion_once_and_reports_matches_in_the_alert(self):
+        agent_app.OpenAI = lambda **kw: SimpleNamespace(responses=FakeModel(risk={"H2O": 0.9}))
+        events: list[dict] = []
+        connectors = NotionConnectors(["Tenant 4E: water stain on ceiling near east riser",
+                                       "Tenant: elevator 2 door keeps reopening"])
+        agent = SimpleNamespace(prompt="Check the building.", events=SimpleNamespace(emit=events.append),
+                                connectors=connectors)
+        agent_app.main(agent, SimpleNamespace(run_id=7, state={}))
+        self.assertEqual([c["name"] for c in connectors.called], ["notion_search"])
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertIn("**Notion: tenant reports and work orders**", text)
+        self.assertIn('H2O: "Tenant 4E: water stain', text)
+        self.assertIn("confirms the sensor finding", text)
+        self.assertIn("sensors show no problem here yet", text)  # LIFT is healthy in this scan
+        tool_events = [e["status"] for e in of_type(events, "antibody.tool") if e["name"] == "notion_search"]
+        self.assertEqual(tool_events, ["called", "ok"])
+
+    def test_scan_without_notion_is_unchanged(self):
+        events, connectors = scan("Check the building.", {}, FakeModel())
+        self.assertEqual(connectors.called, [])
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertNotIn("Notion", text)
+
+
 GOVERNOR_SCRIPT = """
 import json, sys
 from agent import actions

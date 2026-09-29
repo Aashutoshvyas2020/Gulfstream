@@ -34,6 +34,7 @@ alert-max-output-tokens = 1800
 reasoning-effort = "low"
 reassess-after-fix = false
 model-alert = false  # true: Endeavor writes the top alerts (code writes them if it times out)
+notion-reports = true  # search Notion (Flower connector) for tenant reports and work orders
 
 [tool.flwr.app.components]
 agentapp = "agent.agent_app:app"
