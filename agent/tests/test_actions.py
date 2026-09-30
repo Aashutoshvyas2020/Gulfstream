@@ -776,6 +776,8 @@ class WriteActionsTest(unittest.TestCase):
         connectors = NotionConnectors(["Antibody H2O (Pipe leak): leak on riser"])
         events = self.scan("Check the building.", {}, connectors, {"H2O": 0.9})
         self.assertNotIn("coordinator.create_work_order", [e["action"] for e in of_type(events, "antibody.action")])
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertIn("work order Antibody already opened", text)
 
     def test_no_work_order_without_notion(self):
         events = self.scan("Check the building.", {}, Connectors(), {"H2O": 0.9})
