@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "antibody"
-version = "0.3.0"
+version = "0.4.1"
 description = "Antibody: an immune system for buildings. 14 AI agents hunt 14 kinds of failure."
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<4.0"

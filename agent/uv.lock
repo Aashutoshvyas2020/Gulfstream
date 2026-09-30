@@ -40,7 +40,7 @@ wheels = [
 
 [[package]]
 name = "antibody"
-version = "0.3.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "flwr" },
@@ -50,7 +50,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flwr", specifier = ">=1.39.0,<=1.39.0" },
+    { name = "flwr", specifier = "<=1.39.0,>=1.39.0" },
     { name = "openai", specifier = ">=2.16.0,<3.0.0" },
     { name = "sentience-governor", specifier = ">=0.3.2.1,<0.4" },
 ]
