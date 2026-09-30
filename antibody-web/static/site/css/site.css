@@ -274,3 +274,33 @@ footer { position: relative; z-index: 5; padding: 40px var(--gutter) 56px; color
 @media (max-width: 640px) { .ga-st { margin-left: 0; } }
 .gp-who { font: 500 12px var(--mono); color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; margin-left: auto; margin-right: 8px; }
 .gp-who input { font: inherit; width: 130px; padding: 4px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--glass-2); color: var(--ink); }
+
+/* Tower labels are clickable (scene.js sets pointer-events only while a label is visible) */
+.tag { cursor: pointer; }
+.tag:hover { border-color: var(--scan); }
+.agent.focus { outline: 2px solid var(--scan); outline-offset: 2px; transition: outline-color .3s; }
+/* Let clicks through the empty parts of the story layer to the tower labels below;
+   cards, the hero text and the live panel stay clickable */
+main, main > section { pointer-events: none; }
+main > section > * { pointer-events: auto; }
+
+/* Card shown when a tower dot or label is clicked (live/panel.js) */
+#dotCard { position: fixed; z-index: 20; width: min(360px, calc(100vw - 24px)); max-height: calc(100vh - 96px); overflow: auto;
+  background: var(--glass-2); border: 1px solid var(--line-2); border-radius: 14px; padding: 14px 16px; font-size: 13px;
+  box-shadow: 0 18px 40px -18px rgba(40, 30, 10, .45); }
+#dotCard[hidden] { display: none; }
+#dotCard .dc-x { position: absolute; top: 6px; right: 10px; border: 0; background: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+#dotCard .dc-head { font: 600 15px var(--display); display: flex; gap: 8px; align-items: baseline; padding-right: 20px; }
+#dotCard .dc-head b { font-family: var(--mono); }
+#dotCard .dc-st { margin-left: auto; font: 600 11px var(--mono); text-transform: uppercase; color: var(--muted); }
+#dotCard .dc-st[data-s="infected"] { color: var(--infect); } #dotCard .dc-st[data-s="watch"] { color: var(--watch); } #dotCard .dc-st[data-s="healthy"] { color: var(--cell); }
+#dotCard .dc-where { color: var(--muted); margin: 2px 0 8px; font-size: 12px; }
+#dotCard .dc-risk { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 6px 0 8px; }
+#dotCard .dc-risk i { display: block; height: 100%; background: var(--infect); }
+#dotCard p { margin: 6px 0; color: var(--ink-2); }
+#dotCard h5 { margin: 12px 0 4px; font: 600 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--scan); }
+#dotCard ul { list-style: none; padding: 0; margin: 0; }
+#dotCard li { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 3px 0; }
+#dotCard code { font: 500 12px var(--mono); }
+#dotCard .dc-empty { color: var(--muted); font-size: 12px; }
+#dotCard .dc-open { margin-top: 12px; }
