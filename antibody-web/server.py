@@ -119,6 +119,14 @@ def meta() -> dict[str, Any]:
         "superlink": SUPERLINK,
         "federation": fed,
         "error": error,
+        # Account connectors the site can bind to a scan. They work only on SuperGrid, in the
+        # personal federation, once connected at flower.ai > Settings > Connectors.
+        "connectors": [] if SUPERLINK == "local-agent" else [
+            {"ref": "slack", "name": "Slack", "connected": True,
+             "description": "Search Slack for tenant and facilities messages"},
+            {"ref": "notion", "name": "Notion", "connected": True,
+             "description": "Search Notion for tenant reports and work orders"},
+        ],
     }
 
 
