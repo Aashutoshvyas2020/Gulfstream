@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import governor_stats
 import local_writes
 from agent.building_data import BUILDING, SNAPSHOT
 from agent.specialists import SPECIALISTS
@@ -236,6 +237,43 @@ def run_events(run_id: int) -> StreamingResponse:
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )
+
+
+@app.get("/api/governor")
+def governor() -> dict[str, Any]:
+    """Governor records on this machine, summarised across runs and agent types."""
+    data = governor_stats.collect()
+    data["superlink"] = SUPERLINK
+    data["live"] = latest_run()
+    return data
+
+
+def latest_run() -> dict[str, Any] | None:
+    """The newest run on the SuperLink: id, status and elapsed seconds (best effort)."""
+    stub = control_client()
+    try:
+        runs = list(stub.ListRuns(ListRunsRequest()).run_dict.values())
+    except Exception:
+        return None
+    finally:
+        stub.close()
+    if not runs:
+        return None
+    run = max(runs, key=lambda r: getattr(r, "pending_at", "") or "")
+    status = getattr(run, "status", None)
+    return {
+        "run": str(run.run_id),
+        "status": f"{status.status}:{status.sub_status}".strip(":") if status else "unknown",
+        "pending_at": getattr(run, "pending_at", ""),
+        "running_at": getattr(run, "running_at", ""),
+        "finished_at": getattr(run, "finished_at", ""),
+    }
+
+
+@app.get("/governor")
+def governor_page() -> FileResponse:
+    """The Governor view: records across runs and agent types."""
+    return FileResponse(STATIC / "site" / "governor.html")
 
 
 @app.post("/api/runs/{run_id}/stop")

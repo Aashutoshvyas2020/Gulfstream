@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Antibody · Governor</title>
+<meta name="description" content="Sentience Governor records for Antibody, across runs and agents.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/site/css/site.css">
+<link rel="stylesheet" href="/static/site/css/governor.css">
+</head>
+<body class="gv-page">
+
+<header class="top">
+  <a class="brand" href="/" aria-label="Antibody home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 30V17M16 17 7 8M16 17l9-9M7 8 4 5M7 8l-3 3M25 8l3-3M25 8l3 3"/></svg>
+    Antibody
+  </a>
+  <nav aria-label="Pages">
+    <a href="/">Story</a>
+    <a href="/#live">Live scan</a>
+    <a href="/governor" aria-current="page">Governor</a>
+  </nav>
+  <span class="gv-live" id="gvLive"><i></i><span>connecting…</span></span>
+</header>
+
+<main class="gv">
+  <section class="gv-head">
+    <p class="eyebrow">Sentience Governor</p>
+    <h2>Every agent, every run, one record.</h2>
+    <p class="gv-lede">Each of Antibody's agents keeps its own Sentience Governor record: what it declared it would do, every action it reported, and the flags Governor raised. This view reads those records on this machine and adds them up across runs and agents. Governor records and flags; the approval gate is Antibody's own code.</p>
+    <p class="gv-src" id="gvSrc"></p>
+  </section>
+
+  <section class="gv-kpis" id="gvKpis" aria-label="Totals"></section>
+
+  <section class="gv-grid2">
+    <div class="gv-card">
+      <h4>What the records show</h4>
+      <ul class="gv-learn" id="gvLearn"></ul>
+    </div>
+    <div class="gv-card">
+      <h4>Now running</h4>
+      <div id="gvRun" class="gv-run"></div>
+      <h4 class="gv-mt">Approvals recorded</h4>
+      <ul class="gv-appr" id="gvAppr"></ul>
+    </div>
+  </section>
+
+  <section class="gv-card">
+    <h4>Agents <span class="gv-note">high-consequence and out-of-lane actions per run, oldest → newest</span></h4>
+    <div class="gv-heat" id="gvHeat"></div>
+  </section>
+
+  <section class="gv-card">
+    <h4>Agent types <span class="gv-note">across all runs</span></h4>
+    <div class="gv-tablewrap"><table class="gv-table" id="gvAgents"></table></div>
+  </section>
+
+  <section class="gv-card">
+    <h4>Runs <span class="gv-note">newest first</span></h4>
+    <div class="gv-tablewrap"><table class="gv-table" id="gvRuns"></table></div>
+  </section>
+</main>
+
+<script type="module" src="/static/site/js/governor.js"></script>
+</body>
+</html>
