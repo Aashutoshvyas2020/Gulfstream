@@ -4,6 +4,7 @@
  * Owner: live scan UI. */
 
 import { CODES, LIVE, statusOf } from "./state.js";
+import { AREAS } from "../areas.js";
 import { fetchMeta, startScan, streamRun, stopRun } from "./api.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -280,16 +281,55 @@ async function scan(prompt) {
   closeStream = streamRun(runId, onEvent);
 }
 
-// A click on a tower label (scene.js) opens that agent here
-window.addEventListener("antibody:focus", e => {
-  const code = e.detail, el = $(`.agent[data-code="${code}"]`, root);
+// Click a dot or label on the tower (scene.js): a card beside it shows what that agent
+// found, what it did, and what Sentience Governor recorded
+const dotCard = document.createElement("div");
+dotCard.id = "dotCard"; dotCard.hidden = true; document.body.appendChild(dotCard);
+function openInPanel(code) {
+  dotCard.hidden = true;
   document.getElementById("live").scrollIntoView({ behavior: "smooth", block: "start" });
-  if (!el) return;
+  const el = $(`.agent[data-code="${code}"]`, root); if (!el) return;
   el.classList.add("open", "focus");
   setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "center" }), 450);
   setTimeout(() => el.classList.remove("focus"), 2600);
-  if (!reports[code]) $("#lpTrend").textContent = `${code}: run a scan to see its evidence, fix and Governor record.`;
+}
+function showDot(code, x, y) {
+  const area = AREAS.find(a => a.code === code) || { code, name: code, where: "", threat: "" };
+  const r = reports[code];
+  const status = r ? statusOf(r) : "idle";
+  const sessions = govBy[agentId(code)] || [];
+  const recorded = sessions.flatMap(s => s.actions.map(a => ({ ...a, approval: s.approval })));
+  const mine = acts.filter(a => a.agent === code);
+  const ev = r ? (typeof r.evidence === "string" ? r.evidence : JSON.stringify(r.evidence)) : "";
+  dotCard.innerHTML = `
+    <button class="dc-x" aria-label="Close">×</button>
+    <div class="dc-head"><b>${esc(code)}</b> ${esc(area.name)}<span class="dc-st" data-s="${status}">${esc(LABEL[status] || status)}</span></div>
+    <p class="dc-where">${esc(area.where)}${area.threat ? " · watches for " + esc(area.threat.toLowerCase()) : ""}</p>
+    ${r ? `
+      <div class="dc-risk"><i style="width:${Math.round(r.risk_score * 100)}%"></i></div>
+      <p><b>Finding</b> ${esc(r.finding)} · risk ${r.risk_score.toFixed(2)}</p>
+      <p><b>Evidence</b> ${esc(ev)}</p>
+      <p><b>Fix</b> ${esc(r.recommended_action)}</p>`
+    : `<p class="dc-empty">No live report yet. Press <b>Scan building</b> to see this agent's evidence and fix.</p>`}
+    ${mine.length ? `<h5>What it did</h5><ul>${mine.map(a => `<li><code>${esc(a.action)}</code> ${esc(STATUS_LABEL[a.status] || a.status)}${a.approval_id ? " · " + esc(a.approval_id) : ""}</li>`).join("")}</ul>` : ""}
+    <h5>Sentience Governor record</h5>
+    ${recorded.length ? `<ul>${recorded.map(a => `<li><code>${esc(a.tool)}</code> ${govBadge(a)}</li>`).join("")}</ul>`
+      : `<p class="dc-empty">Recorded as the agent acts during a scan: every action, its type, flags and approvals.</p>`}
+    <button class="btn sm dc-open">Open in the live panel</button>`;
+  dotCard.hidden = false;
+  const w = dotCard.offsetWidth, h = dotCard.offsetHeight;
+  const left = Math.min(Math.max(12, (x ?? innerWidth / 2) + 16), innerWidth - w - 12);
+  const top = Math.min(Math.max(72, (y ?? innerHeight / 2) - h / 2), innerHeight - h - 12);
+  dotCard.style.left = left + "px"; dotCard.style.top = top + "px";
+  $(".dc-x", dotCard).onclick = () => (dotCard.hidden = true);
+  $(".dc-open", dotCard).onclick = () => openInPanel(code);
+}
+window.addEventListener("antibody:focus", e => {
+  const d = typeof e.detail === "string" ? { code: e.detail } : e.detail;
+  showDot(d.code, d.x, d.y);
 });
+addEventListener("keydown", e => { if (e.key === "Escape") dotCard.hidden = true; });
+addEventListener("scroll", () => { dotCard.hidden = true; }, { passive: true });
 
 root.querySelectorAll("#lpInject .chip").forEach(ch => ch.addEventListener("click", () => ch.setAttribute("aria-pressed", ch.getAttribute("aria-pressed") === "true" ? "false" : "true")));
 $("#lpScan").onclick = () => scan("Check the building.");

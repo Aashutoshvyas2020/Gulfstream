@@ -165,8 +165,24 @@ if (renderer) {
     const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: HEX.idle, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
     const light = new THREE.PointLight(HEX.infected, 0, 4);
     g.add(dot, ring, light);
-    return { g, dot, ring, light, color: new THREE.Color(HEX.idle), vis: 0 };
+    // A larger invisible sphere makes the dot easy to click (raycasting ignores visibility)
+    const hit = new THREE.Mesh(new THREE.SphereGeometry(0.75, 10, 10), new THREE.MeshBasicMaterial({ visible: false }));
+    g.add(hit);
+    return { g, dot, ring, light, hit, color: new THREE.Color(HEX.idle), vis: 0 };
   });
+
+  /* ---------- click a dot: the live panel shows that agent (live/panel.js) ---------- */
+  const focusArea = (code, x, y) => window.dispatchEvent(new CustomEvent("antibody:focus", { detail: { code, x, y } }));
+  const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  const spotAt = e => {
+    ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const shown = spots.filter(s => s.vis > 0.5);
+    const hits = raycaster.intersectObjects(shown.map(s => s.hit), false);
+    return hits.length ? spots.findIndex(s => s.hit === hits[0].object) : -1;
+  };
+  canvas.addEventListener("click", e => { const i = spotAt(e); if (i >= 0) focusArea(AREAS[i].code, e.clientX, e.clientY); });
+  canvas.addEventListener("pointermove", e => { canvas.style.cursor = spotAt(e) >= 0 ? "pointer" : ""; });
 
   /* ---------- antibodies (one per area) ---------- */
   const abMat = new THREE.MeshBasicMaterial({ color: HEX.healthy });
@@ -218,7 +234,7 @@ if (renderer) {
     const el = document.createElement("div"); el.className = "tag"; el.innerHTML = `<i></i>${a.code}<span>${a.name}</span>`;
     // Click a label: the live panel opens that agent (evidence, fix, Governor record)
     el.dataset.code = a.code; el.title = `${a.code}: evidence, fix and Governor record`;
-    el.addEventListener("click", () => window.dispatchEvent(new CustomEvent("antibody:focus", { detail: a.code })));
+    el.addEventListener("click", e => focusArea(a.code, e.clientX, e.clientY));
     labelsEl.appendChild(el); return el;
   });
 
