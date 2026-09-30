@@ -114,6 +114,33 @@ A Flower run is one chat message, so a held action is decided in the next messag
 
 Tests: `cd agent && python -m unittest discover -s tests -v` (fake model, no SuperLink).
 
+### Notion and Slack: read through Flower, write after approval
+
+**Read (every scan, Flower connectors).** The coordinator searches Notion once (`notion_search`) and Slack for the words of each at-risk area (`slack_search_messages`), and matches titles and messages to areas by keyword (`agent/agent/notion_reports.py`, `slack_reports.py`). The alert gets a "Notion: tenant reports and work orders" and a "Slack: tenant and facilities messages" section, each line saying whether the report confirms a sensor finding. Each connector call times out after 20 s. Run config: `notion-reports`, `slack-reports`.
+
+**Write (Tier 3, after approval).** Flower's connectors are read-only in 1.39, so the scan proposes, and holds for approval:
+- `coordinator.create_work_order`: a Notion work order for the most urgent problem (only when Notion is connected);
+- `coordinator.notify_tenants`: a Slack thread reply to the matching tenant message.
+
+On approval the agent records it (its own Governor session, carrying the approval) and emits `antibody.action` with status `approved` and the write's `args`. The **web console** (`antibody-web/local_writes.py`) then makes the write with the operator's own tokens and sends back `executed` (with the Notion page or Slack message link) or `failed`. Writes happen only through the console, not `flwr chat`. Run config: `write-actions`.
+
+**Setup (once):**
+1. **Flower connectors**: at https://flower.ai/settings/connectors connect Notion (select the work-order page) and Slack. In Flower 1.39 they work only in your **personal** federation, and only from the browser chat or this console (`flwr chat` cannot bind them).
+2. **Notion token**: Notion → Developers → Connections → New connection → **API token** (Read, Insert, Update content). On the work-order page: ••• → Connections → add it.
+3. **Slack bot**: https://api.slack.com/apps → Create New App → From scratch → OAuth & Permissions → Bot Token Scopes: `chat:write` → Install to Workspace; `/invite @<bot>` in the channel.
+4. Put both tokens in `antibody-web/.env.local` (git-ignored; never commit it):
+   ```
+   ANTIBODY_NOTION_TOKEN=ntn_...
+   ANTIBODY_SLACK_BOT_TOKEN=xoxb-...
+   ```
+   Optional: `ANTIBODY_NOTION_DATABASE_ID`, or `ANTIBODY_NOTION_DATABASE` (title to look for; default "Harbor Point work orders"; when only one database is shared it is used).
+5. Start the console on your personal federation and turn on the **Notion** and **Slack** chips before **Scan building**:
+   ```bash
+   cd antibody-web
+   PYTHONUTF8=1 ANTIBODY_SUPERLINK=supergrid ANTIBODY_FEDERATION=@<you>/personal ../agent/.venv/bin/python server.py
+   ```
+   Approve the work order and the reply in the approvals panel (the next scan carries them out).
+
 ## Three lanes (one owner each)
 
 | Lane | Owner | Owns | Starts from |

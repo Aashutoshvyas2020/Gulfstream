@@ -536,6 +536,281 @@ class SpeedTest(unittest.TestCase):
         self.assertEqual(sum(1 for line in text.splitlines() if line.startswith("| ") and line[2].isdigit()), 14)
 
 
+def notion_page(title, url="https://notion.so/x"):
+    return {"object": "page", "url": url,
+            "properties": {"Name": {"type": "title", "title": [{"plain_text": title}]}}}
+
+
+class NotionConnectors(Connectors):
+    """Connectors with Flower's Notion search, returning the given page titles."""
+
+    def __init__(self, titles):
+        super().__init__()
+        self.titles = titles
+
+    def tools(self, refs):
+        if refs == ["notion"]:
+            return [{"type": "function", "name": "notion_search"}]
+        return super().tools(refs)
+
+    def call(self, call):
+        self.called.append(call)
+        if call["name"] == "notion_search":
+            return {"type": "function_call_output", "call_id": call["call_id"],
+                    "output": json.dumps({"results": [notion_page(t) for t in self.titles]})}
+        return super().call(call)
+
+
+class NotionTest(unittest.TestCase):
+    def setUp(self):
+        self._enabled = governance.ENABLED
+        governance.ENABLED = False
+
+    def tearDown(self):
+        governance.ENABLED = self._enabled
+
+    def test_titles_are_matched_to_areas(self):
+        from agent import notion_reports
+        found = notion_reports.pages(json.dumps({"results": [
+            notion_page("Tenant 4E: water stain on ceiling near east riser"),
+            notion_page("Work order: battery room exhaust fan fault F12"),
+            notion_page("Tenant: elevator 2 door keeps reopening"),
+            notion_page("Team lunch on Friday"),
+        ]}))
+        self.assertEqual(len(found), 4)
+        matched = notion_reports.match(found)
+        self.assertEqual(sorted(matched), ["H2O", "LIFT", "PWR"])
+        self.assertEqual(notion_reports.pages('{"error": "unauthorized"}'), [])
+        self.assertEqual(notion_reports.pages("not json"), [])
+
+    def test_scan_searches_notion_once_and_reports_matches_in_the_alert(self):
+        agent_app.OpenAI = lambda **kw: SimpleNamespace(responses=FakeModel(risk={"H2O": 0.9}))
+        events: list[dict] = []
+        connectors = NotionConnectors(["Tenant 4E: water stain on ceiling near east riser",
+                                       "Tenant: elevator 2 door keeps reopening"])
+        agent = SimpleNamespace(prompt="Check the building.", events=SimpleNamespace(emit=events.append),
+                                connectors=connectors)
+        agent_app.main(agent, SimpleNamespace(run_id=7, state={}))
+        self.assertEqual([c["name"] for c in connectors.called], ["notion_search"])
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertIn("**Notion: tenant reports and work orders**", text)
+        self.assertIn('H2O: "Tenant 4E: water stain', text)
+        self.assertIn("confirms the sensor finding", text)
+        self.assertIn("sensors show no problem here yet", text)  # LIFT is healthy in this scan
+        tool_events = [e["status"] for e in of_type(events, "antibody.tool") if e["name"] == "notion_search"]
+        self.assertEqual(tool_events, ["called", "ok"])
+
+    def test_scan_without_notion_is_unchanged(self):
+        events, connectors = scan("Check the building.", {}, FakeModel())
+        self.assertEqual(connectors.called, [])
+        text = "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+        self.assertNotIn("Notion", text)
+
+
+def slack_result(texts):
+    return json.dumps({"ok": True, "messages": {"matches": [
+        {"text": t, "permalink": f"https://slack.com/p{abs(hash(t))}", "channel": {"name": "facilities"}}
+        for t in texts]}})
+
+
+class SlackConnectors(Connectors):
+    """Connectors with Flower's Slack search; every query returns the matching messages."""
+
+    def __init__(self, texts, notion_titles=None):
+        super().__init__()
+        self.texts = texts
+        self.notion = NotionConnectors(notion_titles) if notion_titles is not None else None
+
+    def tools(self, refs):
+        if refs == ["slack"]:
+            return [{"type": "function", "name": "slack_search_messages"}]
+        if refs == ["notion"] and self.notion:
+            return self.notion.tools(refs)
+        return super().tools(refs)
+
+    def call(self, call):
+        self.called.append(call)
+        if call["name"] == "slack_search_messages":
+            query = json.loads(call["arguments"])["query"]
+            hits = [t for t in self.texts if query in t.lower()]
+            return {"type": "function_call_output", "call_id": call["call_id"], "output": slack_result(hits)}
+        if call["name"] == "notion_search" and self.notion:
+            return self.notion.call(call)
+        return super().call(call)
+
+
+class SlackTest(unittest.TestCase):
+    def setUp(self):
+        self._enabled = governance.ENABLED
+        governance.ENABLED = False
+
+    def tearDown(self):
+        governance.ENABLED = self._enabled
+
+    def run_scan(self, connectors, risk):
+        agent_app.OpenAI = lambda **kw: SimpleNamespace(responses=FakeModel(risk=risk))
+        events: list[dict] = []
+        agent = SimpleNamespace(prompt="Check the building.", events=SimpleNamespace(emit=events.append),
+                                connectors=connectors)
+        agent_app.main(agent, SimpleNamespace(run_id=7, state={}))
+        return events, "".join(e["delta"] for e in of_type(events, "response.output_text.delta"))
+
+    def test_queries_follow_the_at_risk_areas(self):
+        from agent import slack_reports
+        ranked = [{"subsystem": "H2O", "risk_score": 0.9, "failed": False},
+                  {"subsystem": "PWR", "risk_score": 0.8, "failed": False},
+                  {"subsystem": "AIR", "risk_score": 0.05, "failed": False}]
+        self.assertEqual(slack_reports.queries(ranked), ["leak", "water", "battery"])
+
+    def test_slack_messages_are_parsed_and_errors_ignored(self):
+        from agent import slack_reports
+        found = slack_reports.messages(slack_result(["Water dripping from the ceiling in 4E again"]))
+        self.assertEqual(found[0]["title"], "#facilities: Water dripping from the ceiling in 4E again")
+        self.assertEqual(slack_reports.messages('{"ok": false, "error": "not_authed"}'), [])
+        self.assertEqual(slack_reports.messages("nope"), [])
+
+    def test_scan_reports_slack_messages_in_the_alert(self):
+        connectors = SlackConnectors(["water dripping from the ceiling in 4e again",
+                                      "the battery room smells odd"])
+        events, text = self.run_scan(connectors, {"H2O": 0.9, "PWR": 0.8})
+        searched = [json.loads(c["arguments"])["query"] for c in connectors.called]
+        self.assertEqual(searched, ["battery", "leak", "water"])  # PWR ranks above H2O
+        self.assertIn("**Slack: tenant and facilities messages**", text)
+        self.assertIn('H2O: "#facilities: water dripping', text)
+        self.assertIn('PWR: "#facilities: the battery room', text)
+        self.assertEqual(text.count("water dripping"), 1)  # found by two searches, shown once
+
+    def test_notion_and_slack_together(self):
+        connectors = SlackConnectors(["water dripping from the ceiling in 4e again"],
+                                     notion_titles=["Tenant 4E: water stain on ceiling near east riser"])
+        events, text = self.run_scan(connectors, {"H2O": 0.9})
+        self.assertLess(text.index("**Notion:"), text.index("**Slack:"))
+        self.assertEqual([e["type"] for e in events].count("response.completed"), 1)
+
+    def test_a_hanging_connector_is_abandoned(self):
+        import time as _time
+
+        class Hanging(SlackConnectors):
+            def call(self, call):
+                if call["name"] == "slack_search_messages":
+                    _time.sleep(2)
+                return super().call(call)
+
+        saved, agent_app.CONNECTOR_TIMEOUT = agent_app.CONNECTOR_TIMEOUT, 0.2
+        try:
+            started = _time.monotonic()
+            events, text = self.run_scan(Hanging(["water dripping"]), {"H2O": 0.9})
+        finally:
+            agent_app.CONNECTOR_TIMEOUT = saved
+        self.assertLess(_time.monotonic() - started, 1.5)  # one search given up after 0.2 s, no more tried
+        self.assertNotIn("Slack:", text)
+        self.assertEqual([e["type"] for e in events].count("response.completed"), 1)
+
+    def test_no_at_risk_area_means_no_slack_search(self):
+        connectors = SlackConnectors(["water dripping"])
+        _, text = self.run_scan(connectors, {})
+        self.assertEqual([c for c in connectors.called if c["name"] == "slack_search_messages"], [])
+        self.assertNotIn("Slack:", text)
+
+
+class WriteActionsTest(unittest.TestCase):
+    """Notion work order and Slack reply: proposed, held, then handed to the console."""
+
+    def setUp(self):
+        self._enabled = governance.ENABLED
+        governance.ENABLED = False
+
+    def tearDown(self):
+        governance.ENABLED = self._enabled
+
+    def scan(self, prompt, state, connectors, risk):
+        agent_app.OpenAI = lambda **kw: SimpleNamespace(responses=FakeModel(risk=risk))
+        events: list[dict] = []
+        agent = SimpleNamespace(prompt=prompt, events=SimpleNamespace(emit=events.append), connectors=connectors)
+        agent_app.main(agent, SimpleNamespace(run_id=7, state=state))
+        return events
+
+    def slack_with_ids(self):
+        connectors = SlackConnectors(["water dripping from the ceiling in 4e again"],
+                                     notion_titles=["Tenant 4E: water stain on ceiling near east riser"])
+        original = connectors.call
+
+        def call(c):
+            result = original(c)
+            if c["name"] == "slack_search_messages":
+                data = json.loads(result["output"])
+                for m in data["messages"]["matches"]:
+                    m["channel"]["id"], m["ts"] = "C123", "1727650000.000100"
+                result["output"] = json.dumps(data)
+            return result
+
+        connectors.call = call
+        return connectors
+
+    def test_writes_are_proposed_held_and_handed_off_after_approval(self):
+        state: dict = {}
+        events = self.scan("Check the building.", state, self.slack_with_ids(), {"H2O": 0.9})
+        pending = of_type(events, "antibody.scan.funnel")[0]["pending"]
+        by_action = {p["action"]: p for p in pending}
+        work_order = by_action["coordinator.create_work_order"]
+        reply = by_action["coordinator.notify_tenants"]
+        self.assertIn("H2O", work_order["args"]["title"])
+        self.assertEqual((reply["args"]["channel"], reply["args"]["thread_ts"]), ("C123", "1727650000.000100"))
+
+        events = self.scan(f"approve {work_order['id']} and {reply['id']}", state, Connectors(), {})
+        approved = [e for e in of_type(events, "antibody.action") if e["status"] == "approved"]
+        self.assertEqual(sorted(e["action"] for e in approved),
+                         ["coordinator.create_work_order", "coordinator.notify_tenants"])
+        self.assertEqual(approved[0]["args"], by_action[approved[0]["action"]]["args"])
+
+    def test_no_work_order_without_notion(self):
+        events = self.scan("Check the building.", {}, Connectors(), {"H2O": 0.9})
+        actions_seen = [e["action"] for e in of_type(events, "antibody.action")]
+        self.assertNotIn("coordinator.create_work_order", actions_seen)
+
+    def test_console_carries_out_the_approved_writes(self):
+        sys.path.insert(0, str(REPO / "antibody-web"))
+        import local_writes
+        calls = []
+
+        def fake_request(method, url, headers=None, json=None, timeout=None):
+            calls.append((method, url, json))
+            if url.endswith("/search"):
+                body = {"results": [{"id": "db1", "title": []}]}
+            elif url.endswith("/databases/db1"):
+                body = {"properties": {"Name": {"type": "title"}}}
+            else:
+                body = {"url": "https://notion.so/new-work-order"}
+            return SimpleNamespace(status_code=200, json=lambda: body)
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(("POST", url, json))
+            return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "channel": "C123", "ts": "1.2"})
+
+        def fake_get(url, headers=None, params=None, timeout=None):
+            return SimpleNamespace(json=lambda: {"permalink": "https://slack.com/archives/C123/p12"})
+
+        local_writes._database.clear()
+        env = {"ANTIBODY_NOTION_TOKEN": "ntn_x", "ANTIBODY_SLACK_BOT_TOKEN": "xoxb-x"}
+        with unittest.mock.patch.dict(os.environ, env), \
+                unittest.mock.patch.object(local_writes.httpx, "request", fake_request), \
+                unittest.mock.patch.object(local_writes.httpx, "post", fake_post), \
+                unittest.mock.patch.object(local_writes.httpx, "get", fake_get):
+            order = local_writes.perform({"action": "coordinator.create_work_order", "approval_id": "A4",
+                                          "args": {"title": "Antibody H2O: leak", "details": "Fix it"}})
+            reply = local_writes.perform({"action": "coordinator.notify_tenants", "approval_id": "A5",
+                                          "args": {"channel": "C123", "thread_ts": "1.1", "text": "On it"}})
+        self.assertEqual((order["status"], order["detail"]), ("executed", "https://notion.so/new-work-order"))
+        self.assertEqual((reply["status"], reply["detail"]), ("executed", "https://slack.com/archives/C123/p12"))
+        page = next(j for m, u, j in calls if u.endswith("/pages"))
+        self.assertEqual(page["parent"], {"database_id": "db1"})
+        self.assertEqual(page["properties"]["Name"]["title"][0]["text"]["content"], "Antibody H2O: leak")
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            missing = local_writes.perform({"action": "coordinator.notify_tenants", "args": {}})
+        self.assertEqual(missing["status"], "failed")
+        self.assertIn("ANTIBODY_SLACK_BOT_TOKEN", missing["detail"])
+
+
 GOVERNOR_SCRIPT = """
 import json, sys
 from agent import actions

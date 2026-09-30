@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import local_writes
 from agent.building_data import BUILDING, SNAPSHOT
 from agent.specialists import SPECIALISTS
 from flwr.cli.chat.chat_app import parse_task_event, start_chat_run
@@ -45,6 +46,7 @@ from flwr.proto.control_pb2 import (  # pylint: disable=E0611
 )
 
 HERE = Path(__file__).resolve().parent
+local_writes.load_env()  # Notion / Slack tokens for approved writes (antibody-web/.env.local)
 STATIC = HERE / "static"
 SUPERLINK = os.environ.get("ANTIBODY_SUPERLINK", "local-agent")
 APP_DIR = Path(os.environ.get("ANTIBODY_APP_DIR", HERE.parent / "agent")).resolve()
@@ -210,6 +212,12 @@ def run_events(run_id: int) -> StreamingResponse:
             kind, payload = parse_task_event(item)
             if kind in RELAYED_EVENTS:
                 yield _sse({"kind": kind, **payload})
+                # An approved Notion / Slack write: carried out here with the laptop's tokens
+                if (kind == "antibody.action" and payload.get("status") == "approved"
+                        and payload.get("action") in local_writes.ACTIONS):
+                    result = local_writes.perform(payload)
+                    print(f"local write {payload.get('action')}: {result['status']} {result['detail']}")
+                    yield _sse(result)
             elif kind in CHAT_FAILURE_EVENTS:
                 yield _sse({"kind": "failed", "raw": payload})
                 return

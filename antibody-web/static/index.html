@@ -487,12 +487,13 @@ function refreshKpis(){
 const agentTotal = () => META ? Object.keys(META.specialists).length : 0;
 
 // Tier 0-3 actions (antibody.action) and the approvals funnel (antibody.scan.funnel)
-const ACTION_CLS = {advised:"t-s", done:"t-ok", fixed:"t-ok", executed:"t-ok", recheck_failed:"t-w", escalated:"t-w",
+const ACTION_CLS = {approved:"t-s", advised:"t-s", done:"t-ok", fixed:"t-ok", executed:"t-ok", recheck_failed:"t-w", escalated:"t-w",
   refused:"t-inf", held:"t-w", rejected:"t-s", skipped:"t-s", failed:"t-inf"};
 const ACTION_TEXT = {done:"done", fixed:"fixed and re-checked", executed:"carried out (approved)",
   recheck_failed:"re-check failed", escalated:"escalated to a human", refused:"refused (not its tool)",
   held:"held for your approval", rejected:"rejected", skipped:"skipped (rejected)", failed:"failed",
-  advised:"recommended (not urgent enough for an approval)"};
+  advised:"recommended (not urgent enough for an approval)",
+  approved:"approved; this laptop is carrying it out"};
 function onAction(m){
   const attempt = m.attempt ? ` (attempt ${m.attempt})` : "";
   const id = m.approval_id ? ` · ${m.approval_id}` : "";
