@@ -100,7 +100,10 @@ def section(
     for report in ranked:
         for page in matched.get(report["subsystem"], []):
             at_risk = not report["failed"] and report["risk_score"] >= 0.3
-            verdict = "confirms the sensor finding" if at_risk else "sensors show no problem here yet"
+            if page["title"].startswith("Antibody "):
+                verdict = "work order Antibody already opened"
+            else:
+                verdict = "confirms the sensor finding" if at_risk else "sensors show no problem here yet"
             link = f" ([open]({page['url']}))" if page["url"] else ""
             lines.append(f"- {report['subsystem']}: \"{page['title']}\"{link}: {verdict}")
     return "\n".join(lines) + "\n"

@@ -466,6 +466,7 @@ def load_memory(context: Context | None) -> dict[str, Any]:
         memory["pending"] = json.loads(record.get("pending", "[]"))
         memory["overrides"] = json.loads(record.get("overrides", "{}"))
         memory["next_id"] = int(record.get("next_id", 1))
+        memory["done_writes"] = json.loads(record.get("done_writes", "[]"))
     return memory
 
 
@@ -498,6 +499,7 @@ def save_actions(context: Context | None, memory: dict[str, Any]) -> None:
             "pending": json.dumps(memory["pending"]),
             "overrides": json.dumps(memory["overrides"]),
             "next_id": memory["next_id"],
+            "done_writes": json.dumps(memory.get("done_writes", [])),
         }
     )
 
@@ -730,13 +732,20 @@ def write_proposals(
     ranked: list[dict[str, Any]],
     notion_matches: dict[str, list[dict[str, str]]] | None,
     slack_matches: dict[str, list[dict[str, str]]],
+    done: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Tier 3 writes to propose: a Notion work order for the most urgent problem (only when
     Notion is connected), and a Slack reply to the first tenant message that matches an
     at-risk area."""
     proposals: list[dict[str, Any]] = []
     notion_connected = notion_matches is not None
-    urgent = [r for r in ranked if not r["failed"]
+    done = done or set()  # "<action>:<area>" already approved in this run series
+    def has_open_order(area: str) -> bool:
+        # One Antibody already wrote (approved earlier, or its row is back in Notion)
+        return f"{WORK_ORDER_ACTION}:{area}" in done or any(
+            p["title"].startswith("Antibody ") for p in (notion_matches or {}).get(area, []))
+
+    urgent = [r for r in ranked if not r["failed"] and not has_open_order(r["subsystem"])
               and actions.is_urgent(r["risk_score"], r["time_to_failure_days"])]
     if urgent and notion_connected:
         r = urgent[0]
@@ -755,7 +764,9 @@ def write_proposals(
     for r in ranked:
         if r["failed"] or r["risk_score"] < 0.3:
             continue
-        message = next((m for m in slack_matches.get(r["subsystem"], []) if m.get("channel_id") and m.get("ts")), None)
+        message = next((m for m in slack_matches.get(r["subsystem"], [])
+                        if m.get("channel_id") and m.get("ts")
+                        and f"{SLACK_REPLY_ACTION}:{m['ts']}" not in done), None)
         if message:
             proposals.append({
                 "agent": "COORDINATOR",
@@ -1037,6 +1048,9 @@ def run_scan(agent: AgentSession, context: Context) -> None:
         for item in approved:
             if item["agent"] == "COORDINATOR" and item["action"] in LOCAL_WRITE_ACTIONS:
                 emit_outcome(hand_off_approved(item, run_tag))
+                # Not proposed again in this run series
+                key = item["args"].get("thread_ts") or item["args"].get("area", "")
+                memory.setdefault("done_writes", []).append(f"{item['action']}:{key}")
             elif item["agent"] == "COORDINATOR":
                 emit_outcome(run_approved_connector(agent, item, run_tag))
             else:
@@ -1106,7 +1120,7 @@ def run_scan(agent: AgentSession, context: Context) -> None:
         notion_matches = notion_found or {}
         slack_matches = lookup_slack(agent, coordinator, ranked) if SLACK_REPORTS else {}
         if WRITE_ACTIONS:
-            for item in write_proposals(ranked, notion_found, slack_matches):
+            for item in write_proposals(ranked, notion_found, slack_matches, set(memory.get("done_writes", []))):
                 coordinator.call(item["action"], lambda: None)  # the attempt, flagged by Governor
                 approval_id, status = approvals.hold(item)
                 emit_outcome(actions.outcome("COORDINATOR", item["action"], actions.APPROVAL, status,
