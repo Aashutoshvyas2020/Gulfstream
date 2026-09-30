@@ -1,6 +1,6 @@
 # Antibody
 
-An immune system for buildings, built on [Flower](https://flower.ai/docs/agent/). 14 AI agents each hunt one kind of building failure, and a coordinator ranks what to fix first, looks up the governing safety standard and alerts the facility manager. It runs on a Flower SuperLink using Flower's own model, Endeavor. Building data stays on-site; the model calls go to Flower's model service. For a fully offline run, it can use a local model through Ollama instead.
+An immune system for buildings, built on [Flower](https://flower.ai/docs/agent/). 14 AI agents each hunt one kind of building failure, and a coordinator ranks what to fix first, can look up the governing safety standard (`web_search`, off by default) and alerts the facility manager. It runs on a Flower SuperLink using Flower's own model, Endeavor. Building data stays on-site; the model calls go to Flower's model service. For a fully offline run, it can use a local model through Ollama instead.
 
 | Agent | Watches | Agent | Watches |
 | :-- | :-- | :-- | :-- |
@@ -9,7 +9,8 @@ An immune system for buildings, built on [Flower](https://flower.ai/docs/agent/)
 | WIRE | Wall wiring | ENV | Facade |
 | FIRE | Sprinkler riser | AIR | Air quality |
 | STR | Concrete column | CYBER | Building control system (BMS) |
-| LIFT | Elevator | | |
+| LIFT | Elevator | GEN | Emergency generator |
+| GAS | Gas and CO | EGRESS | Exits and fire doors |
 
 Sensor readings are simulated (`agent/agent/building_data.py`). Agent reasoning, ranking, connector calls and alerts are live.
 
@@ -95,7 +96,7 @@ With `ANTIBODY_MODEL` set, the 14 specialists run one at a time (Ollama answers 
 4. **Alert.** The alert streams to the console or `flwr chat`.
 5. **Remember.** Health history and the last exchange are kept in Flower run-series state (`context.state`), so the next scan reports the trend.
 
-The agent emits `antibody.scan.started`, `antibody.agent.report`, `antibody.scan.ranked`, `antibody.tool`, `antibody.action` and `antibody.scan.funnel` run events. `server.py` relays them to the browser. This event contract is the boundary between the three lanes below.
+The agent emits `antibody.scan.started`, `antibody.agent.report`, `antibody.scan.ranked`, `antibody.tool`, `antibody.action`, `antibody.scan.funnel` and `antibody.governance` run events. `server.py` relays them to the browser. This event contract is the boundary between the three lanes below.
 
 ### Actions and approvals (`agent/agent/actions.py`)
 
@@ -146,7 +147,7 @@ On approval the agent records it (its own Governor session, carrying the approva
 | Lane | Owner | Owns | Starts from |
 | :-- | :-- | :-- | :-- |
 | **1. Agents** | Roansh Desai | `agent/` | Tier 0–3 actions: add `<area>.<verb>_<object>` tools per agent (e.g. `hvac.reset_damper`, `h2o.shut_valve`), fixed thresholds in code (health < 70 escalates, 2 retries), an approval gate for Tier 3 actions and `start_automation` |
-| **2. Flower integration** | Aashutosh Vyas | `antibody-web/server.py`, SuperLink / SuperGrid setup | Publish the Flower Hub app (required for submission); get SuperGrid access working; confirm the heartbeat fix; real network immunity with 2–3 buildings as SuperNodes using `agent.grid` (`get_nodes`, `push_messages`, `pull_messages`): lessons travel, readings never do |
+| **2. Flower integration** | Aashutosh Vyas | `antibody-web/server.py`, SuperLink / SuperGrid setup | Done: Flower Hub app published ([@aashu/antibody](https://flower.ai/apps/aashu/antibody), 0.4.1); SuperGrid runs work. Next: real network immunity with 2–3 buildings as SuperNodes using `agent.grid` (`get_nodes`, `push_messages`, `pull_messages`): lessons travel, readings never do |
 | **3. Frontend** | Rikin Shah | `antibody-web/static/` | Tier 3 approval prompt, the "actions → auto-fixes → escalations → 1 human decision" funnel, a multi-building view for network immunity |
 | **Sentience Governor** | Roansh Desai (Claude supporting) | `agent/agent/governance.py`, `governance/` | One Governor session per agent (`antibody-<code>`, `antibody-coordinator`); route every new action through `AgentRecord.call` and give it a row in `building_domain.py`; keep the naming contract below |
 
@@ -156,11 +157,11 @@ If you change the shape of a run event, change it in all three lanes in the same
 
 Every agent keeps its own [Sentience Governor](https://github.com/crescerelabs/sentience-governor) record: what it declared it would do (objective and scope), each action it took, and flags where the two diverge. Governor records and flags; it never blocks. The approval gate for Tier 3 actions is Antibody's own code.
 
-- **Where:** `agent/agent/governance.py`, wired into `run_specialist()` (each specialist) and `investigate()` (the coordinator's connector calls).
+- **Where:** `agent/agent/governance.py`, wired into `run_specialist()` (each specialist), the coordinator's connector calls (Notion, Slack, `web_search`, `start_automation`) and every approved Tier 3 action, including the Notion / Slack writes the console carries out.
 - **Naming contract:** agent actions are `<area>.<verb>_<object>` (e.g. `h2o.shut_valve`); each specialist declares its own area as its scope. An action on another area's system is flagged as outside declared scope.
 - **Building domain adapter** (`agent/agent/building_domain.py`): one table gives every action its operation type (READ, WRITE, DELETE, EXECUTE) for the Governor record, and its tier (0–3) for the approval gate. Governor would otherwise guess from words in the tool name. `building_domain.tier(name) == 3` means a human must approve first. Add a row for every new action; an action not in the table is treated as a Tier 3 write.
 - **Flagged as high-consequence** (profiles in `governance/profiles/`):
-  - Tier 3 actions: `trip_breaker`, `shut_valve`, `isolate_zone`, `dispatch_contractor`, `notify_tenants`;
+  - Tier 3 actions: `trip_breaker`, `shut_valve`, `isolate_zone`, `dispatch_contractor`, `notify_tenants` (Slack reply), `create_work_order` (Notion);
   - `start_automation`;
   - every CYBER change: `close_port`, `reset_password`, and others.
 
@@ -179,19 +180,19 @@ cd antibody-web && ../agent/.venv/bin/python governor_pane.py supergrid  # hoste
 
 Approved Tier 3 actions run in their own Governor session, whose declared intent carries the approval (`approved by <name> (<id>)`), in its own record file (`...-approved-<id>.jsonl`). A held proposal carries none. Full records on a local run: `sentience open ~/.sentience/traces/antibody/<file>.jsonl --summary`.
 
+**In the site:** the live panel's *Actions & approvals* shows each action with what Governor recorded for it (operation type, flags such as *high-consequence* or *outside its lane*, and *approved by …*), a Governor badge on every agent card, and Approve / Reject buttons with an approver name.
+
 Set `ANTIBODY_GOVERNOR=0` to turn recording off. If Governor is missing or fails, scans run unrecorded; nothing stops.
 
 ## Status
 
-| Works (tested locally) | Not tested yet | Not built yet |
+| Works (tested) | Not tested yet | Not built yet |
 | :-- | :-- | :-- |
-| The original 11 agents + coordinator on a local SuperLink with Ollama | Endeavor (`flower-endeavor-v1.0`) through Flower's model service, including the model ID | Flower Hub app (not published yet) |
-| Ranking, health score, trend memory across scans | Governor records in a full Flower scan (tested against Governor 0.3.2.1 directly, not end to end) | Multi-building network immunity (`agent.grid` / SuperNodes) |
-| `start_automation` (SuperLink log shows `start-automation` 200) | SuperGrid: account returns `Entitlement error ... Deployment Runtime is not allowed` | |
-| Web console streaming a full scan | `web_search` locally: needs `TAVILY_API_KEY`, `BRAVE_API_KEY`, `EXA_API_KEY` or `FLWR_WEB_SEARCH_ENDPOINT` on the SuperLink | |
-| Tier 0–3 actions, approval gate and the GEN / GAS / EGRESS agents with a fake model (`agent/tests`, 19 tests) | Slack / Notion with real accounts (SuperGrid personal workspace only in flwr 1.39) | |
-| | Tier 0–3 actions and approvals in a real Flower scan; approved `start_automation` on a real SuperLink | |
-| | Console display of `antibody.action` / `antibody.scan.funnel` (needs both in `RELAYED_EVENTS` in `server.py`) | |
+| 14 agents + coordinator on **SuperGrid** (hosted runs in a personal federation) and on a local SuperLink, with Endeavor through Flower's model service; Ollama for offline | An Approve / Reject click in the site carried through a full live scan (checked with replayed run events and unit tests) | Multi-building network immunity (`agent.grid` / SuperNodes) |
+| Ranking, health score, trend memory; Tier 0–3 actions, escalations and held approvals in real Flower scans | Notion and Slack reads and approved writes with real accounts (PR #16; setup above) | |
+| Governor records on SuperGrid: profiles ship in the app; `HIGH_CONSEQUENCE_DETECTED` and scan → fix flags recorded on hosted run 3743492372843902225; `governor_pane.py` | `web_search` safety-standard lookup (off by default: Endeavor did not finish it within its time limit) | |
+| Flower Hub app published: [@aashu/antibody](https://flower.ai/apps/aashu/antibody) 0.4.1 | End-to-end scan time with the final defaults (run config); first hosted runs took 7 to 12 minutes before the speed changes | |
+| Site: 14 agents, Governor tags, approvals panel; 55 agent tests (fake model and real Governor sessions) | | |
 
 ## Known issue: "No heartbeat received from the task"
 
