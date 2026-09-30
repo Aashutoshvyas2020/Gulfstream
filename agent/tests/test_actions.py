@@ -763,6 +763,20 @@ class WriteActionsTest(unittest.TestCase):
                          ["coordinator.create_work_order", "coordinator.notify_tenants"])
         self.assertEqual(approved[0]["args"], by_action[approved[0]["action"]]["args"])
 
+    def test_an_approved_work_order_is_not_proposed_again(self):
+        state: dict = {}
+        events = self.scan("Check the building.", state, self.slack_with_ids(), {"H2O": 0.9})
+        pending = of_type(events, "antibody.scan.funnel")[0]["pending"]
+        ids = [p["id"] for p in pending if p["agent"] == "COORDINATOR"]
+        events = self.scan("approve " + " and ".join(ids), state, self.slack_with_ids(), {"H2O": 0.9})
+        pending = of_type(events, "antibody.scan.funnel")[0]["pending"]
+        self.assertEqual([p for p in pending if p["agent"] == "COORDINATOR"], [])
+
+    def test_an_antibody_row_in_notion_counts_as_open(self):
+        connectors = NotionConnectors(["Antibody H2O (Pipe leak): leak on riser"])
+        events = self.scan("Check the building.", {}, connectors, {"H2O": 0.9})
+        self.assertNotIn("coordinator.create_work_order", [e["action"] for e in of_type(events, "antibody.action")])
+
     def test_no_work_order_without_notion(self):
         events = self.scan("Check the building.", {}, Connectors(), {"H2O": 0.9})
         actions_seen = [e["action"] for e in of_type(events, "antibody.action")]
