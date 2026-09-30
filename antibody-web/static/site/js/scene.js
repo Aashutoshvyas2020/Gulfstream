@@ -216,6 +216,9 @@ if (renderer) {
   const labelsEl = document.getElementById("labels");
   const labels = AREAS.map(a => {
     const el = document.createElement("div"); el.className = "tag"; el.innerHTML = `<i></i>${a.code}<span>${a.name}</span>`;
+    // Click a label: the live panel opens that agent (evidence, fix, Governor record)
+    el.dataset.code = a.code; el.title = `${a.code}: evidence, fix and Governor record`;
+    el.addEventListener("click", () => window.dispatchEvent(new CustomEvent("antibody:focus", { detail: a.code })));
     labelsEl.appendChild(el); return el;
   });
 
@@ -302,12 +305,13 @@ if (renderer) {
 
       /* labels */
       const lab = labels[i];
-      if (!(s.vis > 0.5 && STORY.network < 0.3 && STORY.f > 0.8)) { lab.style.opacity = 0; return; }
+      if (!(s.vis > 0.5 && STORY.network < 0.3 && STORY.f > 0.8)) { lab.style.opacity = 0; lab.style.pointerEvents = "none"; return; }
       proj.copy(s.g.position).project(camera);
-      if (proj.z > 1) { lab.style.opacity = 0; return; }
+      if (proj.z > 1) { lab.style.opacity = 0; lab.style.pointerEvents = "none"; return; }
       const x = (proj.x + 1) / 2 * innerWidth, y = (1 - proj.y) / 2 * innerHeight;
       lab.style.transform = `translate3d(${(x + 12).toFixed(1)}px,${(y - 11).toFixed(1)}px,0)`;
       lab.style.opacity = (dim * s.vis).toFixed(2);
+      lab.style.pointerEvents = dim * s.vis > 0.3 ? "auto" : "none"; // only visible labels take clicks
       lab.dataset.s = st.status;
     });
 

@@ -280,6 +280,17 @@ async function scan(prompt) {
   closeStream = streamRun(runId, onEvent);
 }
 
+// A click on a tower label (scene.js) opens that agent here
+window.addEventListener("antibody:focus", e => {
+  const code = e.detail, el = $(`.agent[data-code="${code}"]`, root);
+  document.getElementById("live").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!el) return;
+  el.classList.add("open", "focus");
+  setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "center" }), 450);
+  setTimeout(() => el.classList.remove("focus"), 2600);
+  if (!reports[code]) $("#lpTrend").textContent = `${code}: run a scan to see its evidence, fix and Governor record.`;
+});
+
 root.querySelectorAll("#lpInject .chip").forEach(ch => ch.addEventListener("click", () => ch.setAttribute("aria-pressed", ch.getAttribute("aria-pressed") === "true" ? "false" : "true")));
 $("#lpScan").onclick = () => scan("Check the building.");
 $("#lpWatch").onclick = () => scan(WATCH_PROMPT);

@@ -274,3 +274,12 @@ footer { position: relative; z-index: 5; padding: 40px var(--gutter) 56px; color
 @media (max-width: 640px) { .ga-st { margin-left: 0; } }
 .gp-who { font: 500 12px var(--mono); color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; margin-left: auto; margin-right: 8px; }
 .gp-who input { font: inherit; width: 130px; padding: 4px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--glass-2); color: var(--ink); }
+
+/* Tower labels are clickable (scene.js sets pointer-events only while a label is visible) */
+.tag { cursor: pointer; }
+.tag:hover { border-color: var(--scan); }
+.agent.focus { outline: 2px solid var(--scan); outline-offset: 2px; transition: outline-color .3s; }
+/* Let clicks through the empty parts of the story layer to the tower labels below;
+   cards, the hero text and the live panel stay clickable */
+main, main > section { pointer-events: none; }
+main > section > * { pointer-events: auto; }
